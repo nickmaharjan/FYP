@@ -74,3 +74,7 @@ Raw tool output is retained even if parsing fails. Missing tools, incompatible i
 The suite includes actual installed-tool analysis, SQLite WAL recovery, evidence-change detection, archive traversal/size protection, tool failure isolation, timeout/cancel behavior, report escaping and API access checks. Installed-tool tests skip explicitly if dependencies are absent.
 
 See [architecture and adapter guide](docs/architecture.md), [tool support and upstream references](docs/tool-support.md), and [evaluation results](docs/evaluation.md). The dashboard and reports are implemented with Python's standard library and local HTML/CSS/JavaScript. No hosted services or API keys are required.
+
+## Contributing
+
+Team members can work in short-lived branches and submit pull requests to `master` for another member to review. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change. Never commit acquired device evidence, case outputs, local tool configuration, or credentials. The repository does not yet include a `LICENSE`; agree on licensing before distributing or accepting broader external contributions.
