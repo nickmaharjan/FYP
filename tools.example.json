@@ -1,0 +1,10 @@
+{
+  "commands": {
+    "aleapp": ["C:/tools/ALEAPP/aleapp.exe"],
+    "exiftool": ["C:/tools/exiftool/ExifTool.exe"],
+    "sleuthkit": ["C:/tools/sleuthkit/bin/fls.exe"],
+    "tsk_recover": ["C:/tools/sleuthkit/bin/tsk_recover.exe"],
+    "plaso": ["/usr/bin/log2timeline.py"],
+    "psort": ["/usr/bin/psort.py"]
+  }
+}
