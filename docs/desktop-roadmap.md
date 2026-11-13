@@ -12,6 +12,14 @@ This is the proposed conversion plan for the four-person team named in the proje
 
 This is an initial development shell. It does not yet package a Windows installer, install or update third-party tools, isolate privileged binaries, or provide production release handling.
 
+## Case management increment (November 2026)
+
+- Searchable case library: lists every case folder, newest first, with status, evidence integrity, finding count and start time. Interrupted analyses appear as `incomplete` instead of being hidden.
+- In-app case review: double-click a case to see headline metrics, integrity and warnings, with tabs for findings (filter by source, severity and text; JSON detail pane), UTC timeline (ISO date-prefix range and text search), cross-tool correlations, and per-tool run outcomes.
+- Filtered findings export to CSV, with spreadsheet-formula neutralization.
+- Cancel a running analysis from the desktop: the current tool process is stopped, remaining tools are skipped, and a partial `cancelled` case and report are still saved.
+- Case-library logic lives in `src/mobile_df/case_library.py` (no GUI dependency) and is covered by `tests/test_case_library.py`.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.

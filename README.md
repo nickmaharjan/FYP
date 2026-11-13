@@ -22,7 +22,7 @@ In PowerShell from the project folder:
 .\start-desktop.ps1
 ```
 
-The desktop workbench uses Python's built-in Tkinter and the same local analysis engine. It includes investigation history, tool readiness, evidence selection, background analysis, and report opening. This is the initial desktop-conversion milestone: a packaged installer, tool installation/update flow, and release hardening are still planned. See [desktop conversion roadmap](docs/desktop-roadmap.md) for the proposed four-member schedule and 50% milestone.
+The desktop workbench uses Python's built-in Tkinter and the same local analysis engine. It includes a searchable investigation library, in-app case review (findings, timeline, correlations and tool runs with filters and CSV export), tool readiness, evidence selection, background analysis with cancellation, and report opening. This is the initial desktop-conversion milestone: a packaged installer, tool installation/update flow, and release hardening are still planned. See [desktop conversion roadmap](docs/desktop-roadmap.md) for the proposed four-member schedule and 50% milestone.
 
 The demo contains generated SMS, Chrome history, a PNG, a benign YARA marker, and a synthetic STIX2 domain indicator. Its detections are intentional training findings.
 
