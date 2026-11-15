@@ -5,8 +5,13 @@ findings and timeline events for in-app review. Nothing here modifies a case.
 """
 import csv
 import json
+import os
+import shutil
+import stat
+import sys
 from pathlib import Path
 
+ARCHIVE_FOLDER = "_archive"
 SEVERITY_ORDER = {"critical": 0, "high": 1, "warning": 2, "medium": 2, "low": 3, "info": 4}
 ACTIVE_STATUSES = {"running", "pending"}
 
@@ -62,6 +67,68 @@ def list_cases(data_dir, query=""):
             continue
         rows.append(summary)
     return sorted(rows, key=lambda row: (row["started_utc"], row["case_id"]), reverse=True)
+
+
+def archive_dir(data_dir):
+    return Path(data_dir) / ARCHIVE_FOLDER
+
+
+def list_archived(data_dir, query=""):
+    return list_cases(archive_dir(data_dir), query)
+
+
+def _case_folder(folder, parent):
+    """Resolve a case folder and require it to be a direct child of parent (no traversal, no links)."""
+    folder, parent = Path(folder), Path(parent).resolve()
+    if folder.is_symlink():
+        raise ValueError("Case folder cannot be a link")
+    resolved = folder.resolve()
+    if resolved.parent != parent or not resolved.is_dir() or resolved.name == ARCHIVE_FOLDER:
+        raise ValueError(f"Not a case folder inside {parent}")
+    if case_summary(resolved) is None:
+        raise ValueError("Folder does not contain a Mobile DF case")
+    return resolved
+
+
+def _move(folder, source_parent, destination_parent):
+    source = _case_folder(folder, source_parent)
+    destination_parent = Path(destination_parent)
+    destination_parent.mkdir(parents=True, exist_ok=True)
+    target = destination_parent / source.name
+    if target.exists():
+        raise ValueError(f"A case folder named {source.name} already exists in {destination_parent}")
+    shutil.move(str(source), str(target))
+    return target
+
+
+def archive_case(data_dir, folder):
+    """Move a case out of the active list into data_dir/_archive. Nothing is deleted."""
+    return _move(folder, data_dir, archive_dir(data_dir))
+
+
+def restore_case(data_dir, folder):
+    """Move an archived case back into the active case list."""
+    return _move(folder, archive_dir(data_dir), data_dir)
+
+
+def delete_case(data_dir, folder):
+    """Permanently delete a case workspace (its copies, logs and reports) from data_dir or its archive.
+
+    Original evidence is never inside a case folder, so it is not affected.
+    """
+    data_dir = Path(data_dir)
+    try:
+        target = _case_folder(folder, data_dir)
+    except ValueError:
+        target = _case_folder(folder, archive_dir(data_dir))
+    def clear_readonly(function, path, _error):
+        # Verified working copies can keep the evidence's read-only attribute on Windows.
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+
+    handler = "onexc" if sys.version_info >= (3, 12) else "onerror"
+    shutil.rmtree(target, **{handler: clear_readonly})
+    return target
 
 
 def load_case(folder):
