@@ -37,6 +37,22 @@ Requires Python 3.10+ (tested with Python 3.12), Internet access during setup, a
 
 If Python is not on PATH, supply `-Python C:\path\to\python.exe` to setup. Setup installs pinned Python dependencies in `.venv`, downloads checked portable tool archives to `.tools`, and writes `tools.local.json`. It does not install system services or modify system PATH. Downloads retain upstream licenses. Plaso is an optional separate installation; see [tool support](docs/tool-support.md).
 
+### Offline installation (no Internet on the analysis computer)
+
+On a Windows x64 computer with Internet, build an offline kit (tool archives that passed their SHA-256 checks, plus prebuilt Python wheels):
+
+```powershell
+.\scripts\setup.ps1 -SavePacks E:\mobile-df-packs
+```
+
+Copy that folder and the project to the offline computer, which needs the same Python version as the kit was built with, then run:
+
+```powershell
+.\scripts\setup.ps1 -Offline -PackDir E:\mobile-df-packs
+```
+
+`-Offline` never uses the network: pip installs only from the kit's `wheels` folder, tool archives are copied from the kit and still checked against their pinned SHA-256, and setup stops with a clear message if anything is missing.
+
 ## CLI
 
 ```powershell
