@@ -5,12 +5,12 @@ from pathlib import Path
 
 from .pipeline import analyze
 from .config import doctor, load_config
-from .core import TOOL_NAMES
+from .core import TOOL_NAMES, write_json
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] not in {"analyze", "serve", "doctor", "demo", "--help", "-h"}:
+    if argv and argv[0] not in {"analyze", "serve", "doctor", "demo", "evaluate", "--help", "-h"}:
         argv.insert(0, "analyze")
     parser = argparse.ArgumentParser(description="Local Android forensic orchestration")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -38,11 +38,24 @@ def main(argv=None):
     demo_parser = commands.add_parser("demo", help="Generate synthetic evidence and analyze it")
     demo_parser.add_argument("--output", type=Path, required=True, help="New demo directory")
     demo_parser.add_argument("--config", type=Path)
+    evaluate_parser = commands.add_parser("evaluate", help="Score a case against a fixture's expected findings")
+    evaluate_parser.add_argument("case", type=Path, help="Case directory or results.json")
+    evaluate_parser.add_argument("--expected", type=Path, required=True, help="Expected findings JSON, e.g. fixture/expected.json")
+    evaluate_parser.add_argument("--output", type=Path, help="Write the evaluation JSON to this new file")
     args = parser.parse_args(argv)
     try:
         if args.command == "doctor":
             print(json.dumps(doctor(load_config(args.config)), indent=2))
             return 0
+        if args.command == "evaluate":
+            from .evaluation import evaluate_case
+            if args.output and args.output.exists():
+                raise ValueError("Evaluation output already exists; choose a new file")
+            evaluation = evaluate_case(args.case, args.expected)
+            if args.output:
+                write_json(args.output, evaluation)
+            print(json.dumps(evaluation, indent=2))
+            return 0 if evaluation["verdict"] == "pass" else 1
         if args.command == "serve":
             from .server import serve
             serve(args.data_dir, args.config, args.port)
@@ -53,6 +66,10 @@ def main(argv=None):
             output = args.output / "case"
             result = analyze(**fixture, output=output, case_id="SYNTHETIC-DEMO", config=args.config,
                              progress=lambda message: print(message, file=sys.stderr, flush=True))
+            from .evaluation import evaluate_case
+            evaluation = evaluate_case(output, args.output / "fixture" / "expected.json")
+            write_json(output / "evaluation.json", evaluation)
+            print(f"Fixture evaluation: {evaluation['verdict']} {evaluation['summary']}", file=sys.stderr, flush=True)
         else:
             options = vars(args).copy()
             options.pop("command")

@@ -37,6 +37,22 @@ Requires Python 3.10+ (tested with Python 3.12), Internet access during setup, a
 
 If Python is not on PATH, supply `-Python C:\path\to\python.exe` to setup. Setup installs pinned Python dependencies in `.venv`, downloads checked portable tool archives to `.tools`, and writes `tools.local.json`. It does not install system services or modify system PATH. Downloads retain upstream licenses. Plaso is an optional separate installation; see [tool support](docs/tool-support.md).
 
+### Offline installation (no Internet on the analysis computer)
+
+On a Windows x64 computer with Internet, build an offline kit (tool archives that passed their SHA-256 checks, plus prebuilt Python wheels):
+
+```powershell
+.\scripts\setup.ps1 -SavePacks E:\mobile-df-packs
+```
+
+Copy that folder and the project to the offline computer, which needs the same Python version as the kit was built with, then run:
+
+```powershell
+.\scripts\setup.ps1 -Offline -PackDir E:\mobile-df-packs
+```
+
+`-Offline` never uses the network: pip installs only from the kit's `wheels` folder, tool archives are copied from the kit and still checked against their pinned SHA-256, and setup stops with a clear message if anything is missing.
+
 ## CLI
 
 ```powershell
@@ -45,6 +61,14 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m mobile_df.cli demo --output output\my-demo
 .\.venv\Scripts\python.exe -m mobile_df.cli analyze C:\cases\android-extraction --output C:\results\CASE-001 --case-id CASE-001 --yara-rules C:\rules\android.yar --iocs C:\rules\indicators.json
 ```
+
+To score a case against a controlled fixture's expected findings (the demo writes `fixture/expected.json` and saves `case/evaluation.json` automatically):
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.cli evaluate output\my-demo\case --expected output\my-demo\fixture\expected.json --output output\my-demo\evaluation-rerun.json
+```
+
+Each expectation is reported as `pass`, `fail`, `skipped` (with the reason, e.g. the tool was unavailable) or `unsupported`. The command exits 0 only for a `pass` verdict, so it can gate CI or release checks. See [evaluation results](docs/evaluation.md#expected-findings-evaluation).
 
 The output directory must be new and separate from evidence. `--tools sqlite yara aleapp` selects a subset. `--timeout 600` controls each subprocess; `--max-rows 2000` controls SQLite row export. Image analysis supports `--image-offset` in sectors and attempts allocated-file recovery with `tsk_recover` before other tools. Supply a known partition offset for partitioned disk images; the default is zero for filesystem images.
 

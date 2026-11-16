@@ -33,6 +33,25 @@ Verified the local dashboard by starting a synthetic case through its UI, observ
 
 The initial desktop conversion is now present as a Tkinter workbench that reuses the existing pipeline. Its source provides recent-case navigation, tool readiness, evidence selection, threaded analysis, and local report handoff. The graphite/lime desktop and browser styling follows the project's non-generic UI requirements. The desktop package still needs interactive Windows review, installation/update flows, and a signed or otherwise distribution-ready installer before it should be treated as a distributable app.
 
+## Expected-findings evaluation
+
+Added November 2026 (verification and evaluation stream). `mobile_df.evaluation` compares a finished case with the fixture's `expected.json`, turning the demo's expected values into repeatable checks:
+
+| Expectation | Check | Depends on |
+|---|---|---|
+| (always) | Original evidence integrity is `verified` | pipeline |
+| `sqlite_database_files` | Distinct SQLite databases discovered | sqlite |
+| `sqlite_sms_rows` | Rows exported from the `sms` table | sqlite |
+| `mvt_sms_rows` | Records in MVT's `sms` output | mvt |
+| `yara_rule` | Named rule matched at least once | yara |
+| `media_files` | Files with ExifTool metadata | exiftool |
+| `image_file` | File listed from a filesystem image (image cases only) | sleuthkit |
+| `shared_url` | URL correlated across at least two tools | two of sqlite, aleapp, mvt |
+
+A check whose tool was not selected, unavailable or not applicable is `skipped` with the reason rather than counted as a pass or failure. Unknown expectation keys are reported as `unsupported`. The verdict is `fail` if any check fails, `pass` if at least one fixture check passes, and otherwise `inconclusive`. `score` is passes divided by scored checks.
+
+Verified on macOS with Python 3.14 (SQLite and ExifTool only available): the demo scored `pass` with 4 passes and 4 explicit skips. The MVT check relies on MVT naming its SMS output `sms.json`; it is covered by a synthetic unit test and still needs confirmation on the Windows workspace with the real MVT runtime. This is a regression check on controlled fixtures, not an accuracy measure for real evidence.
+
 ## Remaining evaluation
 
 Plaso needs a real compatible runtime and dataset. MVT bugreport/AndroidQF modes need their own fixtures. Real acquired Android images, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.
