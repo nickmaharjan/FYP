@@ -33,10 +33,11 @@ def case_summary(folder):
         if status is None:
             return None
         # Analysis started but results were never written: interrupted or still running.
+        rerun = status.get("rerun") if isinstance(status.get("rerun"), dict) else {}
         return {"folder": str(folder), "case_id": status.get("case_id", folder.name),
-                "status": "incomplete", "started_utc": "", "completed_utc": "",
+                "status": "incomplete", "started_utc": status.get("started_utc") or "", "completed_utc": "",
                 "findings": 0, "timeline_events": 0, "correlations": 0,
-                "integrity": "unknown", "evidence": "", "report": None}
+                "integrity": "unknown", "evidence": rerun.get("evidence", ""), "report": None}
     metrics = result.get("metrics") or {}
     report = folder / "report.html"
     return {"folder": str(folder), "case_id": result.get("case_id", folder.name),
@@ -49,6 +50,33 @@ def case_summary(folder):
             "integrity": (result.get("integrity") or {}).get("status", "unknown"),
             "evidence": result.get("evidence", ""),
             "report": str(report) if report.is_file() else None}
+
+
+RERUN_KEYS = ("evidence", "case_id", "kind", "mvt_mode", "tools", "timeout", "max_rows", "max_findings",
+              "max_extract_gb", "image_offset", "yara_rules", "iocs")
+
+
+def rerun_options(folder):
+    """Options to analyze an interrupted case again, as recorded when it started.
+
+    Raises ValueError when the case finished, was recorded before re-run support,
+    or its evidence / rules / indicators are no longer where they were.
+    """
+    folder = Path(folder)
+    if (folder / "results.json").is_file():
+        raise ValueError("This case finished; there is nothing to re-run.")
+    status = _load(folder / "status.json")
+    rerun = status.get("rerun") if status else None
+    if not isinstance(rerun, dict) or not rerun.get("evidence"):
+        raise ValueError("This interrupted case was created by an older version that did not record its "
+                         "evidence path. Start a new analysis with the same evidence instead.")
+    options = {key: rerun.get(key) for key in RERUN_KEYS}
+    if not Path(options["evidence"]).exists():
+        raise ValueError(f"The original evidence is no longer available at {options['evidence']}.")
+    for key, label in (("yara_rules", "YARA rules"), ("iocs", "indicators file")):
+        if options[key] and not Path(options[key]).is_file():
+            raise ValueError(f"The {label} used by this case is no longer available at {options[key]}.")
+    return options
 
 
 def list_cases(data_dir, query=""):

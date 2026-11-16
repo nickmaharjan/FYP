@@ -27,7 +27,7 @@ This is an initial development shell. It does not yet package a Windows installe
 - Settings screen, saved to `data/settings.json` (ignored by Git): case data folder, YARA rules file, indicators file, tool timeout, SQLite row limit, image sector offset, and default tool selection. Values are validated before saving. Before this change the desktop never passed a YARA rules file, so YARA was always skipped in desktop analyses. Logic: `src/mobile_df/settings.py`.
 - Case archive: archive and restore cases (moved to `<case data folder>/_archive`, nothing deleted) and permanently delete a case workspace after confirmation. Delete only accepts a case folder directly inside the case library or its archive; original evidence is never inside a case folder and is not touched.
 - Covered by `tests/test_desktop_workflow.py`, including a check that the progress model matches real pipeline messages.
-- Not yet done: re-running an `incomplete` case, because the pipeline only records the evidence path when a case finishes.
+- Re-run interrupted cases: the pipeline now writes `status.json` before any tool runs, recording the evidence path, tools, limits, YARA rules and indicators. Opening an `incomplete` case in the desktop offers to re-run it with exactly those options in a new case folder; the interrupted folder is kept for archive or deletion. Re-run is refused, with the reason, when the evidence or rules have moved, or when the case predates this change. Logic: `rerun_options()` in `src/mobile_df/case_library.py`; tests: `tests/test_resume.py`.
 
 ## Proposed work split to reach 50% by September 20, 2027
 

@@ -19,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings,
                            filter_timeline, finding_text, list_archived, list_cases, load_case,
-                           restore_case)
+                           rerun_options, restore_case)
 from .config import doctor, load_config
 from .pipeline import analyze
 from .progress import ProgressModel
@@ -274,8 +274,28 @@ class DesktopApp:
 
     def _review_selected_case(self):
         record = self._selected_case()
-        if record:
+        if not record:
+            return
+        if record["status"] == "incomplete":
+            self._offer_rerun(record)
+        else:
             self.show_case_review(record["folder"])
+
+    def _offer_rerun(self, record):
+        try:
+            options = rerun_options(record["folder"])
+        except ValueError as exc:
+            messagebox.showwarning("Interrupted case", f"{record['case_id']} did not finish.\n\n{exc}")
+            return
+        if messagebox.askyesno(
+                "Re-run interrupted case",
+                f"{record['case_id']} was interrupted before it finished, so it has no results or report.\n\n"
+                f"Evidence: {options['evidence']}\n"
+                f"Tools: {', '.join(options['tools']) or 'none'}\n\n"
+                "Re-run it with the same evidence, tools and limits? The analysis starts in a new case folder; "
+                "the interrupted folder is kept so you can archive or delete it."):
+            self.show_new_case(rerun=options)
+            self._start_analysis()
 
     def _open_report(self, folder):
         report = Path(folder) / "report.html"
@@ -676,19 +696,24 @@ class DesktopApp:
 
     # ----- New analysis -------------------------------------------------------
 
-    def show_new_case(self):
+    def show_new_case(self, rerun=None):
         if self.busy:
             return
         self.active_view = "new"
+        self.rerun = rerun
         self._clear()
-        self._heading("NEW INVESTIGATION  /  ACQUIRED EVIDENCE", "Start analysis",
-                      "Select a forensic extraction, archive, Android backup, or supported disk image.")
+        if rerun:
+            self._heading("RE-RUN  /  INTERRUPTED CASE", "Re-run analysis",
+                          "Uses the evidence, tools and limits recorded when this case first started.")
+        else:
+            self._heading("NEW INVESTIGATION  /  ACQUIRED EVIDENCE", "Start analysis",
+                          "Select a forensic extraction, archive, Android backup, or supported disk image.")
 
         form = tk.Frame(self.content, bg=PALETTE["surface"], padx=22, pady=20)
         form.pack(fill="x", anchor="n")
-        self.case_id = tk.StringVar(value="CASE-" + datetime.now().strftime("%Y%m%d-%H%M"))
-        self.evidence_path = tk.StringVar()
-        self.path_label = tk.StringVar(value="No evidence selected")
+        self.case_id = tk.StringVar(value=rerun["case_id"] if rerun else "CASE-" + datetime.now().strftime("%Y%m%d-%H%M"))
+        self.evidence_path = tk.StringVar(value=rerun["evidence"] if rerun else "")
+        self.path_label = tk.StringVar(value=rerun["evidence"] if rerun else "No evidence selected")
         tk.Label(form, text="CASE ID", bg=PALETTE["surface"], fg=PALETTE["muted"],
                  font=(FONT, 8, "bold")).pack(anchor="w")
         self._entry(form, self.case_id).pack(fill="x", ipady=9, pady=(6, 18))
@@ -705,7 +730,7 @@ class DesktopApp:
                  font=(FONT, 8, "bold")).pack(anchor="w")
         tool_line = tk.Frame(form, bg=PALETTE["surface"])
         tool_line.pack(fill="x", pady=(6, 4))
-        preselected = selected_tools(self.settings, self.availability)
+        preselected = (rerun["tools"] if rerun else selected_tools(self.settings, self.availability))
         self.tool_vars = {}
         for name, info in self.availability.items():
             installed = bool(info.get("available"))
@@ -794,13 +819,22 @@ class DesktopApp:
         if not selected:
             messagebox.showwarning("No tools selected", "Select at least one installed analysis tool.")
             return
-        settings = self.settings
-        missing = [label for key, label in (("yara_rules", "YARA rules"), ("iocs", "indicators file"))
-                   if settings.get(key) and not Path(settings[key]).is_file()]
-        if missing:
-            messagebox.showwarning("Settings need attention",
-                                   "The saved " + " and ".join(missing) + " no longer exist. Update them in Settings.")
-            return
+        rerun = getattr(self, "rerun", None)
+        if rerun and evidence == rerun["evidence"]:
+            # Re-run: reuse the limits, rules and indicators recorded when the case first started.
+            options = {key: rerun[key] for key in ("timeout", "max_rows", "max_findings", "max_extract_gb",
+                                                   "image_offset", "kind", "mvt_mode", "yara_rules", "iocs")}
+        else:
+            settings = self.settings
+            missing = [label for key, label in (("yara_rules", "YARA rules"), ("iocs", "indicators file"))
+                       if settings.get(key) and not Path(settings[key]).is_file()]
+            if missing:
+                messagebox.showwarning("Settings need attention",
+                                       "The saved " + " and ".join(missing) + " no longer exist. Update them in Settings.")
+                return
+            options = {"timeout": settings["timeout"], "max_rows": settings["max_rows"],
+                       "image_offset": settings["image_offset"], "yara_rules": settings["yara_rules"] or None,
+                       "iocs": settings["iocs"] or None}
         output = self.data_dir / uuid.uuid4().hex
         self.progress_model = ProgressModel(selected)
         self._build_progress_panel(selected)
@@ -826,9 +860,7 @@ class DesktopApp:
         def work():
             try:
                 result = analyze(evidence, output, case_id, config=self.config, tools=selected,
-                                 progress=progress, cancel=cancel, timeout=settings["timeout"],
-                                 max_rows=settings["max_rows"], image_offset=settings["image_offset"],
-                                 yara_rules=settings["yara_rules"] or None, iocs=settings["iocs"] or None)
+                                 progress=progress, cancel=cancel, **options)
                 self.root.after(0, lambda: self._analysis_complete(result, output))
             except Exception as exc:
                 self.root.after(0, lambda error=exc: self._analysis_failed(error))
