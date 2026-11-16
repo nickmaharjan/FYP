@@ -46,6 +46,14 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m mobile_df.cli analyze C:\cases\android-extraction --output C:\results\CASE-001 --case-id CASE-001 --yara-rules C:\rules\android.yar --iocs C:\rules\indicators.json
 ```
 
+To score a case against a controlled fixture's expected findings (the demo writes `fixture/expected.json` and saves `case/evaluation.json` automatically):
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.cli evaluate output\my-demo\case --expected output\my-demo\fixture\expected.json --output output\my-demo\evaluation-rerun.json
+```
+
+Each expectation is reported as `pass`, `fail`, `skipped` (with the reason, e.g. the tool was unavailable) or `unsupported`. The command exits 0 only for a `pass` verdict, so it can gate CI or release checks. See [evaluation results](docs/evaluation.md#expected-findings-evaluation).
+
 The output directory must be new and separate from evidence. `--tools sqlite yara aleapp` selects a subset. `--timeout 600` controls each subprocess; `--max-rows 2000` controls SQLite row export. Image analysis supports `--image-offset` in sectors and attempts allocated-file recovery with `tsk_recover` before other tools. Supply a known partition offset for partitioned disk images; the default is zero for filesystem images.
 
 Accepted inputs: extraction directories, ZIP/TAR archives, raw filesystem images supported by The Sleuth Kit, and Android `.ab` backups supported by MVT. MVT chooses backup mode for a directory containing `apps`; use `--mvt-mode bugreport` or `--mvt-mode androidqf` for those extraction types. MVT backup mode focuses on SMS/MMS and is not a general Android filesystem analyzer. This prototype analyzes acquired evidence; it does not acquire or unlock phones.
