@@ -57,6 +57,18 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
                               "Timeline only normalizes recognized epoch values or explicit timezones; raw values remain in findings.",
                               "Image recovery covers allocated files at the specified sector offset; encrypted filesystems are not decrypted.",
                               "Prototype limits and tool compatibility can reduce coverage. Review tool logs and warnings."]}
+    # Written before any tool runs so an interrupted case (app closed, power loss) can be re-run
+    # with the same evidence and options. results.json replaces it as the record once the case ends.
+    rerun = {"evidence": str(evidence), "case_id": case_id, "kind": kind, "mvt_mode": mvt_mode,
+             "tools": sorted(selected), "timeout": timeout, "max_rows": max_rows, "max_findings": max_findings,
+             "max_extract_gb": max_extract_gb, "image_offset": image_offset,
+             "yara_rules": str(rules) if rules else None, "iocs": str(indicators) if indicators else None}
+
+    def write_status():
+        write_json(output / "status.json", {"case_id": case_id, "started_utc": result["started_utc"],
+                                             "rerun": rerun, "tool_runs": result["tool_runs"]})
+
+    write_status()
 
     def notify(message):
         with (output / "audit.jsonl").open("a", encoding="utf-8") as stream:
@@ -119,7 +131,7 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
                     if step["status"] != "success":
                         run.update(status=step["status"], reason="Tool did not complete successfully; inspect logs")
                 notify(f"{adapter.name}: {run['status']} ({run['findings_count']} findings)")
-            write_json(output / "status.json", {"case_id": case_id, "tool_runs": result["tool_runs"]})
+            write_status()
         notify("Verifying original evidence after analysis")
         after = inventory(evidence)
         result["integrity"] = {"status": "verified" if after == result["inventory"] else "changed",

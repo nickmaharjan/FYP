@@ -20,6 +20,15 @@ This is an initial development shell. It does not yet package a Windows installe
 - Cancel a running analysis from the desktop: the current tool process is stopped, remaining tools are skipped, and a partial `cancelled` case and report are still saved.
 - Case-library logic lives in `src/mobile_df/case_library.py` (no GUI dependency) and is covered by `tests/test_case_library.py`.
 
+## Desktop workflow increment (November 2026)
+
+- Live analysis progress: a progress bar, elapsed time, and a per-tool state (waiting, running, success with finding count, partial, failed, timeout, skipped). Tools that do not apply to the evidence type are shown as skipped. Logic: `src/mobile_df/progress.py`.
+- Per-case tool selection: the new-case form has a checkbox per tool; tools that are not installed are disabled.
+- Settings screen, saved to `data/settings.json` (ignored by Git): case data folder, YARA rules file, indicators file, tool timeout, SQLite row limit, image sector offset, and default tool selection. Values are validated before saving. Before this change the desktop never passed a YARA rules file, so YARA was always skipped in desktop analyses. Logic: `src/mobile_df/settings.py`.
+- Case archive: archive and restore cases (moved to `<case data folder>/_archive`, nothing deleted) and permanently delete a case workspace after confirmation. Delete only accepts a case folder directly inside the case library or its archive; original evidence is never inside a case folder and is not touched.
+- Covered by `tests/test_desktop_workflow.py`, including a check that the progress model matches real pipeline messages.
+- Re-run interrupted cases: the pipeline now writes `status.json` before any tool runs, recording the evidence path, tools, limits, YARA rules and indicators. Opening an `incomplete` case in the desktop offers to re-run it with exactly those options in a new case folder; the interrupted folder is kept for archive or deletion. Re-run is refused, with the reason, when the evidence or rules have moved, or when the case predates this change. Logic: `rerun_options()` in `src/mobile_df/case_library.py`; tests: `tests/test_resume.py`.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.

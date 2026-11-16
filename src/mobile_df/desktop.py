@@ -2,8 +2,9 @@
 
 Desktop-conversion milestones so far: a native case workspace that reuses the
 existing analysis pipeline, local tool-readiness information, a searchable case
-library, in-app case review (findings, timeline, correlations, tool runs) and
-investigator-initiated cancellation of a running analysis.
+library, in-app case review (findings, timeline, correlations, tool runs),
+investigator-initiated cancellation, per-tool live progress, per-case tool
+selection, case archive/restore/delete and persistent analysis settings.
 """
 import argparse
 import json
@@ -16,10 +17,13 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .case_library import (export_findings_csv, facets, filter_findings, filter_timeline,
-                           finding_text, list_cases, load_case)
+from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings,
+                           filter_timeline, finding_text, list_archived, list_cases, load_case,
+                           rerun_options, restore_case)
 from .config import doctor, load_config
 from .pipeline import analyze
+from .progress import ProgressModel
+from .settings import DEFAULTS, load_settings, save_settings, selected_tools
 
 
 PALETTE = {
@@ -37,13 +41,16 @@ def _short_time(value):
 
 
 class DesktopApp:
-    def __init__(self, root, data_dir=None, config_path=None):
+    def __init__(self, root, data_dir=None, config_path=None, settings_path=None):
         self.root = root
         self.root.title("Mobile DF | Local Investigation Workbench")
         self.root.geometry("1260x790")
         self.root.minsize(1000, 680)
         self.root.configure(bg=PALETTE["page"])
-        self.data_dir = Path(data_dir or "data/cases").resolve()
+        self.settings_path = Path(settings_path or "data/settings.json").resolve()
+        self.settings = load_settings(self.settings_path)
+        self.data_dir_override = data_dir is not None
+        self.data_dir = Path(data_dir or self.settings["data_dir"]).resolve()
         self.config = load_config(config_path)
         self.availability = doctor(self.config)
         self.active_view = "cases"
@@ -67,6 +74,13 @@ class DesktopApp:
         style.configure("DF.TCombobox", fieldbackground=PALETTE["surface"],
                         background=PALETTE["surface"], foreground=PALETTE["ink"],
                         borderwidth=0, arrowsize=12)
+        style.configure("DF.Horizontal.TProgressbar", troughcolor=PALETTE["surface"], background=PALETTE["accent"],
+                        bordercolor=PALETTE["surface"], lightcolor=PALETTE["accent"], darkcolor=PALETTE["accent"],
+                        thickness=8)
+        style.configure("DF.TCheckbutton", background=PALETTE["surface"], foreground=PALETTE["ink"],
+                        font=(FONT, 9), focuscolor=PALETTE["surface"])
+        style.map("DF.TCheckbutton", background=[("active", PALETTE["surface"])],
+                  foreground=[("disabled", PALETTE["muted"])])
         style.configure("DF.TNotebook", background=PALETTE["page"], borderwidth=0)
         style.configure("DF.TNotebook.Tab", background=PALETTE["surface"], foreground=PALETTE["muted"],
                         padding=(16, 8), borderwidth=0, font=(FONT, 9, "bold"))
@@ -90,7 +104,9 @@ class DesktopApp:
         tk.Label(self.rail, text="WORKSPACE", bg=PALETTE["rail"], fg=PALETTE["muted"],
                  font=(FONT, 8, "bold")).pack(anchor="w", pady=(0, 9))
         self.nav_cases = self._nav_button(self.rail, "Investigations", self.show_cases)
+        self.nav_archive = self._nav_button(self.rail, "Archive", self.show_archive)
         self.nav_tools = self._nav_button(self.rail, "Tool readiness", self.show_tools)
+        self.nav_settings = self._nav_button(self.rail, "Settings", self.show_settings)
         tk.Frame(self.rail, bg=PALETTE["line"], height=1).pack(fill="x", pady=24)
         tk.Label(self.rail, text="ANALYSIS RUNS ON THIS COMPUTER", bg=PALETTE["rail"],
                  fg=PALETTE["muted"], font=(FONT, 8, "bold"), wraplength=175,
@@ -140,7 +156,8 @@ class DesktopApp:
             child.destroy()
 
     def _activate_nav(self, selected):
-        for name, button in (("cases", self.nav_cases), ("tools", self.nav_tools)):
+        for name, button in (("cases", self.nav_cases), ("archive", self.nav_archive),
+                             ("tools", self.nav_tools), ("settings", self.nav_settings)):
             button.configure(bg=PALETTE["surface_alt"] if name == selected else PALETTE["rail"],
                              fg=PALETTE["accent"] if name == selected else PALETTE["muted"])
 
@@ -185,6 +202,8 @@ class DesktopApp:
         self._button(actions, "Review case", self._review_selected_case, primary=True).pack(side="left")
         self._button(actions, "Open report", self._open_selected_report).pack(side="left", padx=(8, 0))
         self._button(actions, "Open case folder", self._open_selected_folder).pack(side="left", padx=(8, 0))
+        self._button(actions, "Archive", self._archive_selected_case).pack(side="left", padx=(8, 0))
+        self._button(actions, "Delete", self._delete_selected_case).pack(side="left", padx=(8, 0))
         self.case_empty = tk.Label(main, text="", bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9))
         self.case_empty.pack(side="bottom", anchor="w", pady=(6, 0))
 
@@ -255,8 +274,28 @@ class DesktopApp:
 
     def _review_selected_case(self):
         record = self._selected_case()
-        if record:
+        if not record:
+            return
+        if record["status"] == "incomplete":
+            self._offer_rerun(record)
+        else:
             self.show_case_review(record["folder"])
+
+    def _offer_rerun(self, record):
+        try:
+            options = rerun_options(record["folder"])
+        except ValueError as exc:
+            messagebox.showwarning("Interrupted case", f"{record['case_id']} did not finish.\n\n{exc}")
+            return
+        if messagebox.askyesno(
+                "Re-run interrupted case",
+                f"{record['case_id']} was interrupted before it finished, so it has no results or report.\n\n"
+                f"Evidence: {options['evidence']}\n"
+                f"Tools: {', '.join(options['tools']) or 'none'}\n\n"
+                "Re-run it with the same evidence, tools and limits? The analysis starts in a new case folder; "
+                "the interrupted folder is kept so you can archive or delete it."):
+            self.show_new_case(rerun=options)
+            self._start_analysis()
 
     def _open_report(self, folder):
         report = Path(folder) / "report.html"
@@ -273,6 +312,173 @@ class DesktopApp:
             os.startfile(folder)
         else:
             webbrowser.open(folder.resolve().as_uri())
+
+    def _archive_selected_case(self):
+        record = self._selected_case()
+        if not record:
+            return
+        try:
+            archive_case(self.data_dir, record["folder"])
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Archive failed", str(exc))
+            return
+        self._refresh_case_table()
+        self.case_empty.configure(text=f"{record['case_id']} moved to the archive. Restore it from Archive.")
+
+    def _delete_selected_case(self, after=None):
+        record = self._selected_case()
+        if not record:
+            return
+        if not messagebox.askyesno(
+                "Delete case permanently",
+                f"Permanently delete case {record['case_id']}?\n\n"
+                "This removes its working copies, tool output, logs and reports from:\n"
+                f"{record['folder']}\n\nThe original evidence is not touched. This cannot be undone.",
+                icon="warning", default="no"):
+            return
+        try:
+            delete_case(self.data_dir, record["folder"])
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Delete failed", str(exc))
+            return
+        (after or self._refresh_case_table)()
+
+    # ----- Archive ------------------------------------------------------------
+
+    def show_archive(self):
+        if self.busy:
+            return
+        self.active_view = "archive"
+        self._activate_nav("archive")
+        self._clear()
+        self._heading("CASEWORK  /  ARCHIVE", "Archived investigations",
+                      "Archived cases are hidden from the investigation list but kept intact on this computer.")
+        actions = tk.Frame(self.content, bg=PALETTE["page"])
+        actions.pack(side="bottom", anchor="w", pady=(10, 0))
+        self.case_empty = tk.Label(self.content, text="", bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9))
+        self.case_empty.pack(side="bottom", anchor="w", pady=(6, 0))
+        self.case_table = self._table(self.content, (("case", "CASE", 240), ("status", "STATUS", 180),
+                                                     ("findings", "FINDINGS", 90), ("started", "STARTED (UTC)", 200)))
+        self.case_table.bind("<Double-1>", lambda _event: self._review_selected_case())
+
+        def refresh():
+            self.case_table.delete(*self.case_table.get_children())
+            self.case_rows = {}
+            records = list_archived(self.data_dir)
+            for record in records:
+                item = self.case_table.insert("", "end", values=(record["case_id"], record["status"], record["findings"],
+                                                                 _short_time(record["started_utc"])))
+                self.case_rows[item] = record
+            self.case_empty.configure(text=f"{len(records)} archived case(s)." if records else "The archive is empty.")
+
+        def restore():
+            record = self._selected_case()
+            if not record:
+                return
+            try:
+                restore_case(self.data_dir, record["folder"])
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Restore failed", str(exc))
+                return
+            refresh()
+
+        self._button(actions, "Restore to investigations", restore, primary=True).pack(side="left")
+        self._button(actions, "Review case", self._review_selected_case).pack(side="left", padx=(8, 0))
+        self._button(actions, "Delete permanently", lambda: self._delete_selected_case(after=refresh)).pack(side="left", padx=(8, 0))
+        refresh()
+
+    # ----- Settings -----------------------------------------------------------
+
+    def show_settings(self):
+        if self.busy:
+            return
+        self.active_view = "settings"
+        self._activate_nav("settings")
+        self._clear()
+        self._heading("ENVIRONMENT  /  PREFERENCES", "Analysis settings",
+                      f"Applied to every new analysis. Saved locally in {self.settings_path}.")
+        form = tk.Frame(self.content, bg=PALETTE["surface"], padx=22, pady=18)
+        form.pack(fill="x", anchor="n")
+        values = {key: tk.StringVar(value=str(self.settings.get(key) or ""))
+                  for key in ("data_dir", "timeout", "max_rows", "image_offset", "yara_rules", "iocs")}
+
+        def row(label, key, hint, browse=None):
+            tk.Label(form, text=label, bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 8, "bold")).pack(anchor="w")
+            line = tk.Frame(form, bg=PALETTE["surface"])
+            line.pack(fill="x", pady=(5, 2))
+            self._entry(line, values[key]).pack(side="left", fill="x", expand=True, ipady=7)
+            if browse:
+                self._button(line, "Browse", browse).pack(side="left", padx=(8, 0))
+                self._button(line, "Clear", lambda: values[key].set("")).pack(side="left", padx=(8, 0))
+            tk.Label(form, text=hint, bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 8)).pack(anchor="w", pady=(0, 12))
+
+        def pick_folder():
+            path = filedialog.askdirectory(title="Choose the folder where case workspaces are stored")
+            if path:
+                values["data_dir"].set(path)
+
+        def pick_file(key, title, types):
+            path = filedialog.askopenfilename(title=title, filetypes=types + [("All files", "*.*")])
+            if path:
+                values[key].set(path)
+
+        row("CASE DATA FOLDER", "data_dir", "Where new case workspaces, reports and the archive are kept.", pick_folder)
+        row("YARA RULES FILE", "yara_rules", "Required for YARA to run. Leave empty to skip YARA.",
+            lambda: pick_file("yara_rules", "Choose YARA rules", [("YARA rules", "*.yar *.yara")]))
+        row("INDICATORS FILE (STIX2 / JSON)", "iocs", "Optional indicators of compromise passed to MVT.",
+            lambda: pick_file("iocs", "Choose indicators", [("Indicators", "*.json *.stix2")]))
+        numbers = tk.Frame(form, bg=PALETTE["surface"])
+        numbers.pack(fill="x")
+        for label, key, hint in (("TOOL TIMEOUT (SECONDS)", "timeout", "Per tool process"),
+                                 ("SQLITE ROW LIMIT", "max_rows", "Rows exported per table"),
+                                 ("IMAGE OFFSET (SECTORS)", "image_offset", "Partition start for disk images")):
+            cell = tk.Frame(numbers, bg=PALETTE["surface"])
+            cell.pack(side="left", padx=(0, 24))
+            tk.Label(cell, text=label, bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 8, "bold")).pack(anchor="w")
+            self._entry(cell, values[key], width=14).pack(anchor="w", ipady=7, pady=(5, 2))
+            tk.Label(cell, text=hint, bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 8)).pack(anchor="w")
+
+        tk.Label(form, text="DEFAULT TOOLS FOR NEW CASES", bg=PALETTE["surface"], fg=PALETTE["muted"],
+                 font=(FONT, 8, "bold")).pack(anchor="w", pady=(16, 4))
+        tool_line = tk.Frame(form, bg=PALETTE["surface"])
+        tool_line.pack(fill="x")
+        defaults = self.settings.get("default_tools")
+        tool_vars = {}
+        for name, info in self.availability.items():
+            tool_vars[name] = tk.BooleanVar(value=defaults is None or name in defaults)
+            ttk.Checkbutton(tool_line, text=name if info.get("available") else f"{name} (not installed)",
+                            variable=tool_vars[name], style="DF.TCheckbutton").pack(side="left", padx=(0, 14))
+
+        status = tk.StringVar()
+
+        def save():
+            chosen = [name for name, var in tool_vars.items() if var.get()]
+            candidate = {key: var.get() for key, var in values.items()}
+            candidate["default_tools"] = None if len(chosen) == len(tool_vars) else chosen
+            try:
+                self.settings = save_settings(self.settings_path, candidate)
+            except ValueError as exc:
+                messagebox.showerror("Settings not saved", str(exc))
+                return
+            if not self.data_dir_override:
+                self.data_dir = Path(self.settings["data_dir"]).resolve()
+            status.set("Settings saved. They apply to the next analysis.")
+
+        def reset():
+            if messagebox.askyesno("Reset settings", "Restore the default analysis settings?"):
+                for key, var in values.items():
+                    var.set(str(DEFAULTS[key] or ""))
+                for var in tool_vars.values():
+                    var.set(True)
+
+        actions = tk.Frame(self.content, bg=PALETTE["page"])
+        actions.pack(anchor="w", pady=(14, 0))
+        self._button(actions, "Save settings", save, primary=True).pack(side="left")
+        self._button(actions, "Reset to defaults", reset).pack(side="left", padx=(8, 0))
+        tk.Label(actions, textvariable=status, bg=PALETTE["page"], fg=PALETTE["success"], font=(FONT, 9)).pack(side="left", padx=(14, 0))
+        if self.data_dir_override:
+            tk.Label(self.content, text=f"Case data folder is fixed by --data-dir for this session: {self.data_dir}",
+                     bg=PALETTE["page"], fg=PALETTE["warning"], font=(FONT, 9)).pack(anchor="w", pady=(10, 0))
 
     # ----- Case review --------------------------------------------------------
 
@@ -490,19 +696,24 @@ class DesktopApp:
 
     # ----- New analysis -------------------------------------------------------
 
-    def show_new_case(self):
+    def show_new_case(self, rerun=None):
         if self.busy:
             return
         self.active_view = "new"
+        self.rerun = rerun
         self._clear()
-        self._heading("NEW INVESTIGATION  /  ACQUIRED EVIDENCE", "Start analysis",
-                      "Select a forensic extraction, archive, Android backup, or supported disk image.")
+        if rerun:
+            self._heading("RE-RUN  /  INTERRUPTED CASE", "Re-run analysis",
+                          "Uses the evidence, tools and limits recorded when this case first started.")
+        else:
+            self._heading("NEW INVESTIGATION  /  ACQUIRED EVIDENCE", "Start analysis",
+                          "Select a forensic extraction, archive, Android backup, or supported disk image.")
 
         form = tk.Frame(self.content, bg=PALETTE["surface"], padx=22, pady=20)
         form.pack(fill="x", anchor="n")
-        self.case_id = tk.StringVar(value="CASE-" + datetime.now().strftime("%Y%m%d-%H%M"))
-        self.evidence_path = tk.StringVar()
-        self.path_label = tk.StringVar(value="No evidence selected")
+        self.case_id = tk.StringVar(value=rerun["case_id"] if rerun else "CASE-" + datetime.now().strftime("%Y%m%d-%H%M"))
+        self.evidence_path = tk.StringVar(value=rerun["evidence"] if rerun else "")
+        self.path_label = tk.StringVar(value=rerun["evidence"] if rerun else "No evidence selected")
         tk.Label(form, text="CASE ID", bg=PALETTE["surface"], fg=PALETTE["muted"],
                  font=(FONT, 8, "bold")).pack(anchor="w")
         self._entry(form, self.case_id).pack(fill="x", ipady=9, pady=(6, 18))
@@ -517,8 +728,23 @@ class DesktopApp:
 
         tk.Label(form, text="ANALYSIS TOOLS", bg=PALETTE["surface"], fg=PALETTE["muted"],
                  font=(FONT, 8, "bold")).pack(anchor="w")
-        tk.Label(form, text="Installed tools will run. Missing tools will be listed in the case report.",
-                 bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 9)).pack(anchor="w", pady=(5, 13))
+        tool_line = tk.Frame(form, bg=PALETTE["surface"])
+        tool_line.pack(fill="x", pady=(6, 4))
+        preselected = (rerun["tools"] if rerun else selected_tools(self.settings, self.availability))
+        self.tool_vars = {}
+        for name, info in self.availability.items():
+            installed = bool(info.get("available"))
+            self.tool_vars[name] = tk.BooleanVar(value=name in preselected)
+            box = ttk.Checkbutton(tool_line, text=name if installed else f"{name} (not installed)",
+                                  variable=self.tool_vars[name], style="DF.TCheckbutton")
+            if not installed:
+                box.state(["disabled"])
+            box.pack(side="left", padx=(0, 14))
+        notes = ["Tools that do not apply to the chosen evidence type are skipped and listed in the report."]
+        if not self.settings.get("yara_rules"):
+            notes.append("YARA needs a rules file: set one in Settings or YARA will be skipped.")
+        tk.Label(form, text="  ".join(notes), bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 9),
+                 wraplength=760, justify="left").pack(anchor="w", pady=(2, 13))
         actions = tk.Frame(form, bg=PALETTE["surface"])
         actions.pack(fill="x")
         self.run_button = self._button(actions, "Start local analysis", self._start_analysis, primary=True)
@@ -529,6 +755,44 @@ class DesktopApp:
         self.progress_text = tk.StringVar(value="")
         tk.Label(self.content, textvariable=self.progress_text, bg=PALETTE["page"], fg=PALETTE["accent"],
                  font=(FONT, 9)).pack(anchor="w", pady=(12, 0))
+        self.progress_panel = tk.Frame(self.content, bg=PALETTE["page"])
+        self.progress_panel.pack(fill="x", anchor="w")
+
+    def _build_progress_panel(self, tools):
+        for child in self.progress_panel.winfo_children():
+            child.destroy()
+        self.progress_bar = ttk.Progressbar(self.progress_panel, style="DF.Horizontal.TProgressbar",
+                                            maximum=1000, mode="determinate")
+        self.progress_bar.pack(fill="x", pady=(8, 6))
+        self.elapsed_text = tk.StringVar(value="0:00 elapsed")
+        tk.Label(self.progress_panel, textvariable=self.elapsed_text, bg=PALETTE["page"], fg=PALETTE["muted"],
+                 font=(FONT, 8, "bold")).pack(anchor="w")
+        grid = tk.Frame(self.progress_panel, bg=PALETTE["page"])
+        grid.pack(anchor="w", pady=(6, 0))
+        self.progress_labels = {}
+        for index, name in enumerate(self.progress_model.tools):
+            tk.Label(grid, text=name.upper(), bg=PALETTE["page"], fg=PALETTE["ink"], width=12, anchor="w",
+                     font=(FONT, 8, "bold")).grid(row=index // 4, column=(index % 4) * 2, sticky="w", pady=2)
+            label = tk.Label(grid, text="WAITING", bg=PALETTE["page"], fg=PALETTE["muted"], width=18, anchor="w",
+                             font=(FONT, 8, "bold"))
+            label.grid(row=index // 4, column=(index % 4) * 2 + 1, sticky="w", pady=2)
+            self.progress_labels[name] = label
+
+    def _render_progress(self):
+        model = self.progress_model
+        self.progress_bar["value"] = int(model.fraction * 1000)
+        colors = {"running": PALETTE["accent"], "success": PALETTE["success"], "partial": PALETTE["warning"],
+                  "skipped": PALETTE["muted"], "waiting": PALETTE["muted"]}
+        for name, state, findings in model.rows():
+            text = state.upper() + (f"  {findings}" if state in ("success", "partial") else "")
+            self.progress_labels[name].configure(text=text, fg=colors.get(state, PALETTE["danger"]))
+
+    def _tick_elapsed(self):
+        if not self.busy or not getattr(self, "progress_model", None):
+            return
+        seconds = self.progress_model.elapsed_seconds
+        self.elapsed_text.set(f"{seconds // 60}:{seconds % 60:02d} elapsed")
+        self.root.after(1000, self._tick_elapsed)
 
     def _choose_directory(self):
         path = filedialog.askdirectory(title="Select acquired Android extraction")
@@ -550,8 +814,30 @@ class DesktopApp:
         if not evidence or not case_id:
             messagebox.showwarning("Evidence required", "Enter a case ID and choose acquired evidence first.")
             return
+        selected = [name for name, var in self.tool_vars.items()
+                    if var.get() and self.availability.get(name, {}).get("available")]
+        if not selected:
+            messagebox.showwarning("No tools selected", "Select at least one installed analysis tool.")
+            return
+        rerun = getattr(self, "rerun", None)
+        if rerun and evidence == rerun["evidence"]:
+            # Re-run: reuse the limits, rules and indicators recorded when the case first started.
+            options = {key: rerun[key] for key in ("timeout", "max_rows", "max_findings", "max_extract_gb",
+                                                   "image_offset", "kind", "mvt_mode", "yara_rules", "iocs")}
+        else:
+            settings = self.settings
+            missing = [label for key, label in (("yara_rules", "YARA rules"), ("iocs", "indicators file"))
+                       if settings.get(key) and not Path(settings[key]).is_file()]
+            if missing:
+                messagebox.showwarning("Settings need attention",
+                                       "The saved " + " and ".join(missing) + " no longer exist. Update them in Settings.")
+                return
+            options = {"timeout": settings["timeout"], "max_rows": settings["max_rows"],
+                       "image_offset": settings["image_offset"], "yara_rules": settings["yara_rules"] or None,
+                       "iocs": settings["iocs"] or None}
         output = self.data_dir / uuid.uuid4().hex
-        selected = [name for name, info in self.availability.items() if info.get("available")]
+        self.progress_model = ProgressModel(selected)
+        self._build_progress_panel(selected)
         self.busy = True
         self.active_view = "running"
         self.run_button.configure(state="disabled")
@@ -561,18 +847,26 @@ class DesktopApp:
         cancel = self.cancel_event = threading.Event()
         self.progress_text.set("Preparing a verified case copy…")
 
+        model = self.progress_model
+
+        def apply(message):
+            model.update(message)
+            self.progress_text.set(message)
+            self._render_progress()
+
         def progress(message):
-            self.root.after(0, lambda text=message: self.progress_text.set(text))
+            self.root.after(0, lambda text=message: apply(text))
 
         def work():
             try:
                 result = analyze(evidence, output, case_id, config=self.config, tools=selected,
-                                 progress=progress, cancel=cancel)
+                                 progress=progress, cancel=cancel, **options)
                 self.root.after(0, lambda: self._analysis_complete(result, output))
             except Exception as exc:
                 self.root.after(0, lambda error=exc: self._analysis_failed(error))
 
         threading.Thread(target=work, daemon=True).start()
+        self._tick_elapsed()
 
     def _cancel_analysis(self):
         if not self.cancel_event or self.cancel_event.is_set():
@@ -589,6 +883,7 @@ class DesktopApp:
         self.cancel_event = None
         self.active_view = "result"
         self.cancel_button.pack_forget()
+        self.progress_bar["value"] = 1000
         message = f"{result['status']}  /  {result['metrics']['findings']} findings  /  {result['metrics']['timeline_events']} timeline events"
         self.progress_text.set(message)
         self._button(self.content, "Review case", lambda: self.show_case_review(output), primary=True).pack(anchor="w", pady=(10, 0))
@@ -608,11 +903,12 @@ class DesktopApp:
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Mobile DF native desktop workbench")
-    parser.add_argument("--data-dir", type=Path, default=Path("data/cases"))
+    parser.add_argument("--data-dir", type=Path, help="Override the case data folder from Settings")
     parser.add_argument("--config", type=Path)
+    parser.add_argument("--settings", type=Path, default=Path("data/settings.json"))
     args = parser.parse_args(argv)
     root = tk.Tk()
-    DesktopApp(root, args.data_dir, args.config)
+    DesktopApp(root, args.data_dir, args.config, args.settings)
     root.mainloop()
 
 
