@@ -89,6 +89,20 @@ Accepted inputs: extraction directories, ZIP/TAR archives, raw filesystem images
 
 Raw tool output is retained even if parsing fails. Missing tools, incompatible inputs, timeouts, errors, disabled tools and truncation are visible. Reports preserve original values and source provenance. Correlations represent exact shared values and require investigator interpretation.
 
+## Hand off a case
+
+To give a finished case to a supervisor or colleague, open it in the desktop app and click **Export handoff ZIP**, or run:
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.handoff export data\cases\<case-folder> E:\CASE-001-handoff.zip
+```
+
+The ZIP contains the report, results, timeline, evidence hash manifest, audit log, tool logs and the rules or indicators used, plus `HANDOFF-MANIFEST.json` with the SHA-256 of every packaged file. A `.sha256` file with the ZIP's own hash is saved next to it; send both. Evidence working copies are never included, and native tool output (which can contain recovered evidence files) is only included when you choose it. The recipient verifies the package with:
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.handoff verify E:\CASE-001-handoff.zip
+```
+
 ## Verify and extend
 
 ```powershell

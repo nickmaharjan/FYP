@@ -503,6 +503,7 @@ class DesktopApp:
         self._button(actions, "Back to investigations", self.show_cases).pack(side="left")
         self._button(actions, "Open full report", lambda: self._open_report(folder), primary=True).pack(side="left", padx=(8, 0))
         self._button(actions, "Open case folder", lambda: self._open_folder(folder)).pack(side="left", padx=(8, 0))
+        self._button(actions, "Export handoff ZIP", lambda: self._export_handoff(folder, result)).pack(side="left", padx=(8, 0))
 
         band = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=14)
         band.pack(fill="x", pady=(0, 14))
@@ -529,6 +530,30 @@ class DesktopApp:
         tabs.add(self._timeline_tab(tabs, result), text="TIMELINE")
         tabs.add(self._correlations_tab(tabs, result), text="CORRELATIONS")
         tabs.add(self._tool_runs_tab(tabs, result), text="TOOL RUNS")
+
+    def _export_handoff(self, folder, result):
+        from .handoff import default_filename, export_case
+        path = filedialog.asksaveasfilename(title="Save case handoff package", defaultextension=".zip",
+                                            initialfile=default_filename(result), filetypes=[("ZIP archive", "*.zip")])
+        if not path:
+            return
+        include = messagebox.askyesno(
+            "Include native tool output?",
+            "Also include each tool's raw output folder?\n\n"
+            "It helps a reviewer re-check findings, but it can contain files recovered from the evidence "
+            "and make the package much larger.\n\n"
+            "Evidence working copies are never included.", default="no")
+        try:
+            summary = export_case(folder, path, include_tool_output=include)
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Export failed", str(exc))
+            return
+        messagebox.showinfo(
+            "Handoff package saved",
+            f"{summary['files']} files packaged in\n{summary['zip']}\n\n"
+            f"ZIP SHA-256:\n{summary['sha256']}\n\n"
+            f"The hash is also saved in {Path(summary['sha256_file']).name}. Send both files; "
+            "the recipient can check them with: python -m mobile_df.handoff verify <zip>")
 
     def _table(self, parent, columns):
         frame = tk.Frame(parent, bg=PALETTE["page"])
