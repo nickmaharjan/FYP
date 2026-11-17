@@ -28,6 +28,7 @@ This is an initial development shell. It does not yet package a Windows installe
 - Case archive: archive and restore cases (moved to `<case data folder>/_archive`, nothing deleted) and permanently delete a case workspace after confirmation. Delete only accepts a case folder directly inside the case library or its archive; original evidence is never inside a case folder and is not touched.
 - Covered by `tests/test_desktop_workflow.py`, including a check that the progress model matches real pipeline messages.
 - Re-run interrupted cases: the pipeline now writes `status.json` before any tool runs, recording the evidence path, tools, limits, YARA rules and indicators. Opening an `incomplete` case in the desktop offers to re-run it with exactly those options in a new case folder; the interrupted folder is kept for archive or deletion. Re-run is refused, with the reason, when the evidence or rules have moved, or when the case predates this change. Logic: `rerun_options()` in `src/mobile_df/case_library.py`; tests: `tests/test_resume.py`.
+- Case handoff: **Export handoff ZIP** on the case review screen (and `python -m mobile_df.handoff export|verify`) packages a finished case with a per-file SHA-256 manifest and a `.sha256` file for the ZIP, so a recipient can verify nothing changed. Evidence working copies are never packaged; native tool output is opt-in. Logic: `src/mobile_df/handoff.py`; tests: `tests/test_handoff.py`.
 
 ## Proposed work split to reach 50% by September 20, 2027
 
