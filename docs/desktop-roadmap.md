@@ -44,6 +44,16 @@ Cross-stream work toward the 50% gate (each line names the stream it advances):
 
 Gate status after this increment: create/resume/review is in place; documented install with verified packs exists but there is no in-app install/update yet; adapters log versions and distinguish partial from failed, but Plaso still has no real runtime; a reproducible controlled evaluation and installation guide exist, but real Android datasets are still needed.
 
+## Installer, Plaso runtime and fixtures increment (18 November 2026)
+
+- Dependency manager: in-app install, update and repair of the pinned tool packs (`mobile_df.installer`, desktop Tool readiness buttons with progress and cancel, offline kit support). HTTPS-only downloads, SHA-256 checked before unpacking, unpack beside the old copy and swap only when complete, path-traversal-safe unpacking, `tools.local.json` updated without losing other entries, installed versions recorded.
+- Forensic integrations: Plaso runs through the official Docker image with read-only evidence, no network and container-path mapping, so Windows hosts have a supported Plaso route. Not yet run against the real image here (Docker not running).
+- Verification and evaluation: ZIP export and Android `.ab` backup fixtures; the benchmark now covers four evidence types, all passing 3/3 runs. Documented that YARA cannot see inside compressed backups.
+- Desktop usability: a setup checklist on the home screen (tool packs, YARA/MVT, YARA rules, writable case folder, optional Plaso) with links to fix each item; it disappears when everything is done.
+- Tests: `tests/test_installer_plaso.py` (61 tests in total).
+
+Gate status: (1) create/resume/review: done. (2) discover and install supported tools through documented local flows: done for the portable packs; Python packages still come from `setup.ps1`. (3) adapters with logged versions and clear failure states: done, except a real Plaso run still needs to be recorded. (4) reproducible controlled evaluation and installation guide: done for synthetic fixtures; real authorised Android datasets and a clean-machine install test remain.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.

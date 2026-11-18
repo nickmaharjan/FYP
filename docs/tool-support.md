@@ -8,7 +8,7 @@
 | ALEAPP | Filesystem extraction mode and TSV normalization; raw native reports retained | Yes, v2026.4.1 Windows CLI |
 | MVT | Android backup, bugreport and AndroidQF command adapters; JSON artifacts and alerts; STIX2 input | Backup and synthetic indicator detection verified with 2026.9.7; other modes need datasets |
 | The Sleuth Kit | `fls -m` body-file listing with modified/accessed/changed/created times on the timeline (MACB-labelled), deleted-entry flags, NTFS `$FILE_NAME` times and a `$STANDARD_INFORMATION`-before-`$FILE_NAME` creation lead; `tsk_recover -a` allocated-file recovery at a selected sector offset; raw and E01 images | Yes, 4.15.0; synthetic FAT12 image and NIST NTFS E01 test image |
-| Plaso | `log2timeline` storage generation, `psort -o json_line` export and timeline normalization | Command/parser fixture only; real runtime not installed on this Windows host |
+| Plaso | `log2timeline` storage generation, `psort -o json_line` export and timeline normalization; native commands or the official Docker image (`plaso_docker_image`) with read-only evidence, no network and container-path mapping | Command/parser fixture and a simulated Docker runtime; the real image has not been run on this Windows host (Docker not running) |
 
 An adapter being implemented does not imply every Android app/database/version is supported. Native tool output and logs remain available for review. ALEAPP's CLI can complete despite individual plugin errors; inspect its log for plugin-level failures. MVT can report partial module failures in its own output. Tools that are missing, disabled, incompatible, timed out or failed are distinguished in the case report.
 
@@ -21,6 +21,10 @@ An adapter being implemented does not imply every Android app/database/version i
 A tool run is `partial` rather than `failed` when the tool processed the input but some items could not be read. ExifTool exits with code 1 if any single file is unreadable (for example NTFS-encrypted files); the run is now `partial` with a reason such as "ExifTool could not read 4 of 12 files (encrypted, corrupt or unsupported)", and the unreadable files are `warning` findings. A real failure (no output, crash, timeout) is still `failed` or `timeout`. In the desktop, **View logs** shows each step's command, exit code, stderr and stdout.
 
 FAT and exFAT store local time without a time zone. The Sleuth Kit adapter reads them as UTC (`-z UTC`) so results do not depend on the examiner computer's time zone; adjust for the device's zone when interpreting FAT times.
+
+## Known limitation: compressed containers and YARA
+
+YARA matches bytes in the files it is given. An Android `.ab` backup is zlib-compressed, so rules do not match content inside it (the synthetic backup's marker is not found). MVT reads the backup's content instead. Extract a backup to a folder first if YARA should scan the app data.
 
 ## Configuration
 
