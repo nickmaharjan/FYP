@@ -97,6 +97,14 @@ def _check(key, expected, result, runs):
         observed = _image_files(result)
         wanted = expected.lower()
         return ["sleuthkit"], "File listed from the filesystem image", observed, any(n.lower() == wanted for n in observed)
+    if key == "image_file_time":
+        if kind != "image":
+            return "skip", f"Applies to image evidence; this case is {kind}"
+        wanted, date = expected["file"].lower(), expected["date"]
+        observed = sorted({f["timestamp"] for f in _findings(result, "sleuthkit", "file_time")
+                           if PurePosixPath(f["path"]).name.lower() == wanted})
+        return (["sleuthkit"], "File modification date recovered from the image timeline", observed,
+                any(stamp.startswith(date) for stamp in observed))
     if key == "shared_url":
         url_tools = [t for t in ("sqlite", "aleapp", "mvt") if runs.get(t, {}).get("status") in RAN]
         if len(url_tools) < 2:

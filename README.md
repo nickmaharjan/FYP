@@ -28,6 +28,8 @@ The demo contains generated SMS, Chrome history, a PNG, a benign YARA marker, an
 
 ## Install on another Windows x64 machine
 
+Step-by-step guide with checks and troubleshooting: [docs/installation.md](docs/installation.md).
+
 Requires Python 3.10+ (tested with Python 3.12), Internet access during setup, and sufficient space for evidence working copies.
 
 ```powershell
@@ -66,6 +68,21 @@ To score a case against a controlled fixture's expected findings (the demo write
 
 ```powershell
 .\.venv\Scripts\python.exe -m mobile_df.cli evaluate output\my-demo\case --expected output\my-demo\fixture\expected.json --output output\my-demo\evaluation-rerun.json
+```
+
+To run both controlled fixtures several times and get accuracy and timing tables for the evaluation chapter:
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.benchmark --output output\bench-run --runs 3
+```
+
+It writes `benchmark.json` and `benchmark.md` (verdicts, check pass rate, wall time, per-tool time, findings, tool versions).
+
+To list tools, versions and licences, or check downloaded packs against their pinned SHA-256:
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.registry
+.\.venv\Scripts\python.exe -m mobile_df.registry --verify
 ```
 
 Each expectation is reported as `pass`, `fail`, `skipped` (with the reason, e.g. the tool was unavailable) or `unsupported`. The command exits 0 only for a `pass` verdict, so it can gate CI or release checks. See [evaluation results](docs/evaluation.md#expected-findings-evaluation).

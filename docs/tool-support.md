@@ -7,10 +7,20 @@
 | ExifTool | Recursive JSON extraction for supported media/document extensions | Yes, 13.59 |
 | ALEAPP | Filesystem extraction mode and TSV normalization; raw native reports retained | Yes, v2026.4.1 Windows CLI |
 | MVT | Android backup, bugreport and AndroidQF command adapters; JSON artifacts and alerts; STIX2 input | Backup and synthetic indicator detection verified with 2026.9.7; other modes need datasets |
-| The Sleuth Kit | `fls` recursive listing and `tsk_recover -a` allocated-file recovery at a selected sector offset | Yes, 4.15.0; synthetic FAT12 image |
+| The Sleuth Kit | `fls -m` body-file listing with modified/accessed/changed/created times on the timeline (MACB-labelled), deleted-entry flags, NTFS `$FILE_NAME` times and a `$STANDARD_INFORMATION`-before-`$FILE_NAME` creation lead; `tsk_recover -a` allocated-file recovery at a selected sector offset; raw and E01 images | Yes, 4.15.0; synthetic FAT12 image and NIST NTFS E01 test image |
 | Plaso | `log2timeline` storage generation, `psort -o json_line` export and timeline normalization | Command/parser fixture only; real runtime not installed on this Windows host |
 
 An adapter being implemented does not imply every Android app/database/version is supported. Native tool output and logs remain available for review. ALEAPP's CLI can complete despite individual plugin errors; inspect its log for plugin-level failures. MVT can report partial module failures in its own output. Tools that are missing, disabled, incompatible, timed out or failed are distinguished in the case report.
+
+## Versions, licences and pinned packs
+
+`tool-packs.json` pins the portable packs (version, download URL, SHA-256). `scripts/setup.ps1` installs from it and `python -m mobile_df.registry --verify` checks the downloaded archives against it. Every case records each tool's version in `tool_availability` and in each tool run (`tool_version`), shown in the report and the desktop **TOOL RUNS** tab. Versions are read from the tool (`exiftool -ver`, `fls -V`, `log2timeline --version`), from the installed Python package (yara-python, MVT), or, for ALEAPP which has no version flag, from the pinned pack when the configured executable is the one setup unpacked.
+
+## Clear failure states
+
+A tool run is `partial` rather than `failed` when the tool processed the input but some items could not be read. ExifTool exits with code 1 if any single file is unreadable (for example NTFS-encrypted files); the run is now `partial` with a reason such as "ExifTool could not read 4 of 12 files (encrypted, corrupt or unsupported)", and the unreadable files are `warning` findings. A real failure (no output, crash, timeout) is still `failed` or `timeout`. In the desktop, **View logs** shows each step's command, exit code, stderr and stdout.
+
+FAT and exFAT store local time without a time zone. The Sleuth Kit adapter reads them as UTC (`-z UTC`) so results do not depend on the examiner computer's time zone; adjust for the device's zone when interpreting FAT times.
 
 ## Configuration
 

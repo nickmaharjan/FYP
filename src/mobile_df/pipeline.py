@@ -98,7 +98,8 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
         ctx = Context(staged, output, kind, config, timeout, max_rows, max_findings,
                       rules, indicators, mvt_mode, image_offset, cancel)
         for adapter in ADAPTERS:
-            run = {"tool": adapter.name, "status": "pending", "findings_count": 0, "steps": []}
+            run = {"tool": adapter.name, "status": "pending", "findings_count": 0, "steps": [],
+                   "tool_version": result["tool_availability"][adapter.name].get("version")}
             result["tool_runs"].append(run)
             reason = adapter.applicable(ctx)
             if adapter.name not in selected:
@@ -128,8 +129,9 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
                 run["steps"] = ctx.steps[before:]
                 run["duration_seconds"] = round(time.monotonic() - tick, 3)
                 for step in run["steps"]:
-                    if step["status"] != "success":
-                        run.update(status=step["status"], reason="Tool did not complete successfully; inspect logs")
+                    if step["status"] != "success" and run["status"] != "failed":
+                        run.update(status=step["status"],
+                                   reason=step.get("reason") or "Tool did not complete successfully; inspect logs")
                 notify(f"{adapter.name}: {run['status']} ({run['findings_count']} findings)")
             write_status()
         notify("Verifying original evidence after analysis")

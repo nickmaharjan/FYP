@@ -241,3 +241,42 @@ def export_findings_csv(findings, destination):
                                                     item.get("severity"), item.get("timestamp"),
                                                     item.get("path"), finding_text(item))])
     return destination
+
+
+LOG_TAIL_BYTES = 64 * 1024
+
+
+def _tail(path, limit=LOG_TAIL_BYTES):
+    size = path.stat().st_size
+    with path.open("rb") as stream:
+        if size > limit:
+            stream.seek(size - limit)
+        text = stream.read().decode("utf-8", errors="replace")
+    return ("[... earlier output omitted; open the log file for all of it ...]\n" + text) if size > limit else text
+
+
+def step_logs(folder, run):
+    """Return each step of a tool run with the end of its stdout/stderr logs, for error review.
+
+    Only files inside the case's logs folder are read, whatever the results file says.
+    """
+    logs = (Path(folder) / "logs").resolve()
+    steps = []
+    for step in run.get("steps") or []:
+        entry = {"step": step.get("step", ""), "status": step.get("status", ""), "exit_code": step.get("exit_code"),
+                 "command": " ".join(str(part) for part in step.get("command") or []),
+                 "reason": step.get("reason") or step.get("error"), "duration_seconds": step.get("duration_seconds")}
+        for key in ("stderr_log", "stdout_log"):
+            relative = step.get(key)
+            text = "(no log recorded)"
+            if relative:
+                path = (Path(folder) / relative).resolve()
+                if path.parent != logs:
+                    text = "(log path outside the case logs folder; not read)"
+                elif not path.is_file():
+                    text = "(log file missing)"
+                else:
+                    text = _tail(path) or "(empty)"
+            entry[key.replace("_log", "")] = text
+        steps.append(entry)
+    return steps
