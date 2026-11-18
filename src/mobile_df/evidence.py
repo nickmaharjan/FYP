@@ -111,6 +111,9 @@ def stage(evidence, output, manifest, kind, max_bytes):
     return target
 
 
+ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".tbz2", ".tar.bz2", ".txz", ".tar.xz")
+
+
 def detect_kind(path, requested="auto"):
     if requested != "auto":
         return requested
@@ -120,4 +123,11 @@ def detect_kind(path, requested="auto"):
         return "backup"
     if zipfile.is_zipfile(path) or tarfile.is_tarfile(path):
         return "archive"
+    name = path.name.lower()
+    if name.endswith(ARCHIVE_SUFFIXES):
+        # Without this, a damaged or partly copied archive is treated as a disk image,
+        # no extraction tool applies, and the case reports "completed" with nothing analysed.
+        raise ValueError(f"{path.name} is named like an archive but is not a readable ZIP or TAR file; "
+                         "it may be damaged, incomplete or in an unsupported format. "
+                         "If it is really a disk image, analyse it from the command line with --kind image.")
     return "image"

@@ -142,6 +142,13 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
             result["warnings"].append("Original evidence changed during analysis; this case requires review")
         result["correlations"] = correlate(result["findings"])
         result["timeline"] = sorted([f for f in result["findings"] if f["timestamp"]], key=lambda f: (f["timestamp"], f["id"]))
+        if not result["inventory"]:
+            result["warnings"].append("Evidence contains no files; nothing was analysed")
+        ran = [run for run in result["tool_runs"] if run["status"] in {"success", "failed", "timeout", "partial"}]
+        if selected and not ran and not (cancel and cancel.is_set()):
+            skipped = ", ".join(f"{run['tool']} {run['status']}" for run in result["tool_runs"] if run["tool"] in selected)
+            result["warnings"].append(f"None of the selected tools could analyse this evidence ({skipped}); "
+                                      "check the evidence type and installed tools")
         statuses = {run["status"] for run in result["tool_runs"]}
         result["status"] = "cancelled" if "cancelled" in statuses else "completed_with_warnings" if (
             statuses & {"failed", "timeout", "partial", "unavailable"} or result["warnings"]) else "completed"
