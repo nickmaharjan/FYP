@@ -40,11 +40,8 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Installing Python dependencies failed.'
 }
 
-$downloads = @(
-    @{Name='aleapp'; Url='https://github.com/abrignoni/ALEAPP/releases/download/v2026.4.1/aleapp-v2026.4.1-Windows_x86_64.zip'; SHA256='8EB1AD25F9FDC89AF345277AD6FF748636E3552490E39A4FD379DEBDE0AF70FA'; Binary='aleapp/aleapp.exe'},
-    @{Name='sleuthkit'; Url='https://github.com/sleuthkit/sleuthkit/releases/download/sleuthkit-4.15.0/sleuthkit-4.15.0-win32.zip'; SHA256='C2EBAB8105B893D97BD8CE35B88E01985E2A106EFC97F03ADF95840A631B20CE'; Binary='sleuthkit/sleuthkit-4.15.0-win32/bin/fls.exe'},
-    @{Name='exiftool'; Url='https://oliverbetz.de/cms/files/Artikel/ExifTool-for-Windows/exiftool-13.59_64.zip'; SHA256='577257DD22BAEBE77157D905792D6ED2C5916CD03AA627F40B2175DB12110AC6'; Binary='exiftool/ExifTool.exe'}
-)
+# Pinned packs live in tool-packs.json so setup and `python -m mobile_df.registry --verify` agree.
+$downloads = (Get-Content -Raw -LiteralPath (Join-Path $projectRoot 'tool-packs.json') | ConvertFrom-Json).packs
 New-Item -ItemType Directory -Force -Path '.tools' | Out-Null
 foreach ($download in $downloads) {
     $archive = Join-Path '.tools' ($download.Name + '.zip')
@@ -60,7 +57,7 @@ foreach ($download in $downloads) {
             Invoke-WebRequest -Uri $download.Url -OutFile $archive
         }
     }
-    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $download.SHA256) {
+    if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $download.sha256.ToUpper()) {
         throw "Checksum mismatch for $archive. The package is not the release tested with this prototype."
     }
     if (-not (Test-Path -LiteralPath (Join-Path '.tools' $download.Binary))) {
@@ -91,5 +88,5 @@ if ($SavePacks) {
     Write-Host "Offline kit saved to $SavePacks. Install it with: .\scripts\setup.ps1 -Offline -PackDir <that folder>"
 }
 $env:PYTHONPATH = Join-Path $projectRoot 'src'
-& $pythonPath -m mobile_df.cli doctor
+& $pythonPath -m mobile_df.registry
 Write-Host 'Setup complete. Run ./start.ps1 to launch the dashboard.'

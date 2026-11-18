@@ -4,6 +4,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import command_for
@@ -100,7 +101,16 @@ class ExifToolAdapter(Adapter):
         values = json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
         if not isinstance(values, list):
             raise ValueError("ExifTool output must be a JSON array")
+        unreadable = [row for row in values if isinstance(row, dict) and ("ExifTool:Error" in row or "Error" in row)]
+        if step["status"] == "failed" and step["exit_code"] == 1 and values:
+            # ExifTool exits 1 when any single file cannot be read (for example NTFS-encrypted files)
+            # even though every other file was processed; that is a partial result, not a tool failure.
+            step["status"] = "partial"
+            names = ", ".join(relative_source(row.get("SourceFile", ""), ctx.evidence) for row in unreadable[:3])
+            step["reason"] = (f"ExifTool could not read {len(unreadable)} of {len(values)} files "
+                              f"(encrypted, corrupt or unsupported){': ' + names if names else ''}")
         return [artifact(self.name, "metadata", relative_source(row.pop("SourceFile", ""), ctx.evidence), row,
+                         severity="warning" if row in unreadable else "info",
                          provenance={"output": step["stdout_log"], "record": i + 1})
                 for i, row in enumerate(values[:ctx.max_findings])]
 
@@ -185,6 +195,67 @@ class MVTAdapter(Adapter):
         return results
 
 
+# fls "body file" columns: MD5|name|inode|mode|UID|GID|size|atime|mtime|ctime|crtime (UTC epoch seconds).
+BODY_TIMES = (("modified", 8, "m"), ("accessed", 7, "a"), ("changed", 9, "c"), ("created", 10, "b"))
+FILE_NAME_SUFFIX = " ($FILE_NAME)"
+DELETED_SUFFIXES = (" (deleted-realloc)", " (deleted)")
+
+
+def _epoch(value):
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(number, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def parse_bodyfile(lines, mount="/"):
+    """Group fls -m output into one entry per file, keeping NTFS $FILE_NAME times beside the main times."""
+    entries, order = {}, []
+    for number, line in enumerate(lines, 1):
+        fields = line.rstrip("\r\n").split("|")
+        if len(fields) < 11:
+            continue
+        name = "|".join(fields[1:-9])          # file names may themselves contain "|"
+        inode, mode, size = fields[-9], fields[-8], fields[-5]
+        file_name_attribute = name.endswith(FILE_NAME_SUFFIX)
+        if file_name_attribute:
+            name = name[:-len(FILE_NAME_SUFFIX)]
+        deleted = False
+        for suffix in DELETED_SUFFIXES:
+            if name.endswith(suffix):
+                name, deleted = name[:-len(suffix)], True
+                break
+        path = name[len(mount):] if mount and name.startswith(mount) else name
+        times = {label: _epoch(fields[index - 11]) for label, index, _ in BODY_TIMES}
+        key = (path, inode.split("-")[0], deleted)
+        entry = entries.get(key)
+        if entry is None:
+            entry = entries[key] = {"path": path, "metadata_address": inode, "mode": mode, "deleted": deleted,
+                                    "times": {}, "line": number}
+            order.append(key)
+        if file_name_attribute:
+            entry["file_name_times"] = times
+        else:
+            entry.update(metadata_address=inode, mode=mode, times=times, line=number)
+            entry["size"] = int(size) if size.isdigit() else size
+    return [entries[key] for key in order]
+
+
+def timestamp_anomaly(entry):
+    """NTFS lead: $STANDARD_INFORMATION created earlier than $FILE_NAME created suggests the time was set back."""
+    standard = entry["times"].get("created")
+    file_name = (entry.get("file_name_times") or {}).get("created")
+    if standard and file_name and standard < file_name:
+        return {"standard_information_created": standard, "file_name_created": file_name}
+    return None
+
+
 class SleuthKitAdapter(Adapter):
     name = "sleuthkit"
 
@@ -192,17 +263,38 @@ class SleuthKitAdapter(Adapter):
         return None if ctx.kind == "image" and ctx.evidence.is_file() else "Filesystem tools require a raw filesystem/disk image"
 
     def run(self, ctx):
-        step = ctx.run(self.name, command_for(self.name, ctx.config) + ["-r", "-p", "-o", str(ctx.image_offset), str(ctx.evidence)])
-        results = []
+        step = ctx.run(self.name, command_for(self.name, ctx.config) + ["-r", "-m", "/", "-z", "UTC", "-o", str(ctx.image_offset), str(ctx.evidence)])
         with (ctx.output / step["stdout_log"]).open(encoding="utf-8", errors="replace") as stream:
-            for index, line in enumerate(stream):
-                if line.strip():
-                    entry, separator, path = line.strip().partition(":\t")
-                    results.append(artifact(self.name, "filesystem_entry", path if separator else ctx.evidence.name,
-                                           {"entry": line.strip(), "metadata_address": entry},
-                                           provenance={"output": step["stdout_log"], "line": index + 1}))
-                if len(results) >= ctx.max_findings:
-                    break
+            entries = parse_bodyfile(stream)
+        results = []
+        provenance = lambda entry: {"output": step["stdout_log"], "line": entry["line"]}
+        for entry in entries:
+            detail = {key: entry[key] for key in ("metadata_address", "mode", "size", "deleted", "times", "file_name_times") if key in entry}
+            results.append(artifact(self.name, "filesystem_entry", entry["path"], detail,
+                                   severity="warning" if entry["deleted"] else "info", provenance=provenance(entry)))
+            # One timeline event per distinct time, labelled with mactime-style MACB flags.
+            labels = {}
+            for label, _, flag in BODY_TIMES:
+                stamp = entry["times"].get(label)
+                if stamp:
+                    labels.setdefault(stamp, []).append((label, flag))
+            for stamp, hits in sorted(labels.items()):
+                flags = "".join(flag if any(f == flag for _, f in hits) else "." for flag in "macb")
+                results.append(artifact(self.name, "file_time", entry["path"],
+                                       {"macb": flags, "times": [label for label, _ in hits], "deleted": entry["deleted"],
+                                        "metadata_address": entry["metadata_address"]},
+                                       stamp, f"fls body file {flags} time (epoch seconds, -z UTC); filesystems that store local time "
+                                       "without a zone (FAT/exFAT) are read as UTC",
+                                       provenance=provenance(entry)))
+            anomaly = timestamp_anomaly(entry)
+            if anomaly:
+                results.append(artifact(self.name, "timestamp_anomaly", entry["path"],
+                                       dict(anomaly, note="$STANDARD_INFORMATION creation predates $FILE_NAME creation; "
+                                                          "a possible sign of timestamp manipulation that needs review"),
+                                       severity="warning", provenance=provenance(entry)))
+            if len(results) >= ctx.max_findings:
+                results = results[:ctx.max_findings]
+                break
         recover = command_for("tsk_recover", ctx.config)
         if recover and step["status"] == "success":
             directory = ctx.directory("recovered")

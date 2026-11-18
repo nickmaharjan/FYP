@@ -17,7 +17,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings,
+from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings, step_logs,
                            filter_timeline, finding_text, list_archived, list_cases, load_case,
                            rerun_options, restore_case)
 from .config import doctor, load_config
@@ -529,7 +529,7 @@ class DesktopApp:
         tabs.add(self._findings_tab(tabs, result), text="FINDINGS")
         tabs.add(self._timeline_tab(tabs, result), text="TIMELINE")
         tabs.add(self._correlations_tab(tabs, result), text="CORRELATIONS")
-        tabs.add(self._tool_runs_tab(tabs, result), text="TOOL RUNS")
+        tabs.add(self._tool_runs_tab(tabs, result, folder), text="TOOL RUNS")
 
     def _export_handoff(self, folder, result):
         from .handoff import default_filename, export_case
@@ -681,43 +681,129 @@ class DesktopApp:
                                             len(item.get("finding_ids") or []), item.get("value", "")))
         return tab
 
-    def _tool_runs_tab(self, notebook, result):
+    def _tool_runs_tab(self, notebook, result, folder):
         tab = tk.Frame(notebook, bg=PALETTE["page"])
-        tk.Label(tab, text="Each adapter's outcome for this case. Raw output is kept in the case logs folder.",
-                 bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9)).pack(anchor="w", pady=10)
-        table = self._table(tab, (("tool", "TOOL", 110), ("status", "STATUS", 130), ("count", "FINDINGS", 80),
-                                  ("duration", "SECONDS", 80), ("reason", "REASON", 520)))
+        bar = self._filter_bar(tab)
+        tk.Label(bar, text="Each adapter's outcome for this case. Select a tool and choose View logs to see why it "
+                           "failed or what it printed.", bg=PALETTE["page"], fg=PALETTE["muted"],
+                 font=(FONT, 9)).pack(side="left")
+        table = self._table(tab, (("tool", "TOOL", 100), ("version", "VERSION", 90), ("status", "STATUS", 120),
+                                  ("count", "FINDINGS", 80), ("duration", "SECONDS", 80), ("reason", "REASON", 480)))
+        runs = {}
         for run in result.get("tool_runs") or []:
-            table.insert("", "end", values=(run.get("tool", ""), run.get("status", ""), run.get("findings_count", 0),
-                                            run.get("duration_seconds", ""), run.get("reason", "")))
+            iid = table.insert("", "end", values=(run.get("tool", ""), run.get("tool_version") or "", run.get("status", ""),
+                                                  run.get("findings_count", 0), run.get("duration_seconds", ""),
+                                                  run.get("reason", "")))
+            runs[iid] = run
+
+        def view(_event=None):
+            selection = table.selection()
+            run = runs.get(selection[0]) if selection else None
+            if not run:
+                messagebox.showinfo("View logs", "Select a tool run first.")
+            elif not run.get("steps"):
+                messagebox.showinfo("No logs", f"{run.get('tool')} did not run: {run.get('reason') or run.get('status')}.")
+            else:
+                self._show_logs(folder, run)
+
+        self._button(bar, "Open logs folder", lambda: self._open_folder(Path(folder) / "logs")).pack(side="right")
+        self._button(bar, "View logs", view, primary=True).pack(side="right", padx=(0, 8))
+        table.bind("<Double-1>", view)
         return tab
+
+    def _show_logs(self, folder, run):
+        window = tk.Toplevel(self.root, bg=PALETTE["page"])
+        window.title(f"{run.get('tool')} logs - {run.get('status')}")
+        window.geometry("980x640")
+        tk.Label(window, text=f"{run.get('tool', '').upper()}  /  {run.get('status', '').upper()}",
+                 bg=PALETTE["page"], fg=PALETTE["accent"], font=(FONT, 9, "bold")).pack(anchor="w", padx=16, pady=(14, 0))
+        tk.Label(window, text=run.get("reason") or "Completed without a recorded problem.", bg=PALETTE["page"],
+                 fg=PALETTE["ink"], font=(FONT, 10), wraplength=930, justify="left").pack(anchor="w", padx=16, pady=(4, 10))
+        text = tk.Text(window, bg=PALETTE["surface"], fg=PALETTE["ink"], relief="flat", bd=0, font=("Consolas", 9),
+                       wrap="none", padx=12, pady=10)
+        scroll = ttk.Scrollbar(window, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y", padx=(0, 16), pady=(0, 16))
+        text.pack(fill="both", expand=True, padx=(16, 0), pady=(0, 16))
+        for step in step_logs(folder, run):
+            text.insert("end", f"=== {step['step']}: {step['status']} (exit code {step['exit_code']}, "
+                               f"{step['duration_seconds']} s)\n")
+            if step["reason"]:
+                text.insert("end", f"Reason: {step['reason']}\n")
+            text.insert("end", f"Command: {step['command']}\n\n--- stderr ---\n{step['stderr'].rstrip()}\n\n"
+                               f"--- stdout ---\n{step['stdout'].rstrip()}\n\n")
+        text.configure(state="disabled")
 
     # ----- Tools --------------------------------------------------------------
 
     def show_tools(self):
         if self.busy:
             return
+        from .registry import TOOLS, load_packs
         self.active_view = "tools"
         self._activate_nav("tools")
         self._clear()
         self._heading("ENVIRONMENT  /  LOCAL DEPENDENCIES", "Tool readiness",
-                      "The desktop shell checks the local runtime before analysis. It does not install tools yet.")
+                      "Installed forensic tools, the versions recorded in every case, and their licences.")
+        try:
+            packs = load_packs()
+        except (OSError, ValueError):
+            packs = {}
+        actions = tk.Frame(self.content, bg=PALETTE["page"])
+        actions.pack(fill="x", pady=(0, 14))
+        self._button(actions, "Verify tool packs", self._verify_packs, primary=True).pack(side="left")
+        self._button(actions, "Licence notices", self._show_notices).pack(side="left", padx=(8, 0))
+        self._button(actions, "Re-check tools", self._recheck_tools).pack(side="left", padx=(8, 0))
         columns = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=14)
         columns.pack(fill="x", pady=(0, 3))
-        for label, width in (("TOOL", 26), ("STATUS", 20), ("VERSION / COMMAND", 70)):
+        widths = (("TOOL", 26), ("STATUS", 12), ("VERSION", 12), ("PINNED", 10), ("LICENCE", 46), ("INSTALL", 30))
+        for label, width in widths:
             tk.Label(columns, text=label, bg=PALETTE["surface"], fg=PALETTE["muted"],
                      width=width, anchor="w", font=(FONT, 8, "bold")).pack(side="left")
         for name, info in self.availability.items():
-            row = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=14)
+            meta = TOOLS.get(name, {})
+            row = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=12)
             row.pack(fill="x", pady=1)
             status = "AVAILABLE" if info.get("available") else "MISSING"
             color = PALETTE["success"] if info.get("available") else PALETTE["warning"]
-            detail = info.get("version") or info.get("backend") or " / ".join(info.get("command") or []) or info.get("hint", "")
-            for label, width, foreground in ((name, 26, PALETTE["ink"]), (status, 20, color), (detail, 70, PALETTE["muted"])):
+            pinned = packs.get(name, {}).get("version", "")
+            values = ((meta.get("title", name), PALETTE["ink"]), (status, color), (info.get("version") or "-", PALETTE["ink"]),
+                      (pinned or "-", PALETTE["muted"]), (meta.get("license", ""), PALETTE["muted"]),
+                      (meta.get("install", ""), PALETTE["muted"]))
+            for (label, foreground), (_, width) in zip(values, widths):
                 tk.Label(row, text=label, bg=PALETTE["surface"], fg=foreground,
                          width=width, anchor="w", font=(FONT, 9)).pack(side="left")
-        tk.Label(self.content, text="Tool installation and updates are planned for a later milestone.",
+        tk.Label(self.content, text="Missing tools: run scripts\\setup.ps1 (online) or scripts\\setup.ps1 -Offline "
+                                    "-PackDir <kit> (offline). See docs/installation.md.",
                  bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9)).pack(anchor="w", pady=(18, 0))
+
+    def _verify_packs(self):
+        from .registry import verify_packs
+        try:
+            report = verify_packs()
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Verify tool packs", str(exc))
+            return
+        lines = [f"{name}  {item['version']}:  {item['status']}" for name, item in report.items()]
+        bad = any(item["status"] == "MISMATCH" for item in report.values())
+        advice = ("A pack does not match its pinned SHA-256. Delete it from .tools and run setup again." if bad else
+                  "Downloaded packs match the versions this project was tested with.")
+        (messagebox.showerror if bad else messagebox.showinfo)("Verify tool packs", "\n".join(lines) + "\n\n" + advice)
+
+    def _show_notices(self):
+        from .registry import notices
+        window = tk.Toplevel(self.root, bg=PALETTE["page"])
+        window.title("Third-party licence notices")
+        window.geometry("720x520")
+        text = tk.Text(window, bg=PALETTE["surface"], fg=PALETTE["ink"], relief="flat", bd=0, font=("Consolas", 9),
+                       wrap="word", padx=12, pady=10)
+        text.pack(fill="both", expand=True, padx=16, pady=16)
+        text.insert("1.0", notices())
+        text.configure(state="disabled")
+
+    def _recheck_tools(self):
+        self.availability = doctor(self.config)
+        self.show_tools()
 
     # ----- New analysis -------------------------------------------------------
 

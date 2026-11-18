@@ -52,6 +52,30 @@ A check whose tool was not selected, unavailable or not applicable is `skipped` 
 
 Verified on macOS with Python 3.14 (SQLite and ExifTool only available): the demo scored `pass` with 4 passes and 4 explicit skips. The MVT check relies on MVT naming its SMS output `sms.json`; it is covered by a synthetic unit test and still needs confirmation on the Windows workspace with the real MVT runtime. This is a regression check on controlled fixtures, not an accuracy measure for real evidence.
 
+## Repeated controlled benchmark (18 November 2026)
+
+`python -m mobile_df.benchmark --runs 3` on Windows 11 x64, Python 3.12.14, with SQLite 3.53.1, yara-python 4.5.4, ExifTool 13.59, ALEAPP 2026.4.1, MVT 2026.9.7 and The Sleuth Kit 4.15.0 installed (Plaso not installed):
+
+| Case | Verdicts | Check pass rate | Wall time mean (min-max) s | Findings | Timeline events | Same findings every run |
+|---|---|---|---|---|---|---|
+| Extraction (5 tools) | pass, pass, pass | 100% (7/7 scored checks per run) | 18.8 (14.6-27.3) | 26 | 11 | yes |
+| FAT12 image (Sleuth Kit + YARA) | pass, pass, pass | 100% (4/4) | 0.74 (0.68-0.78) | 8 | 1 | yes |
+
+Mean per-tool time in the extraction case: ALEAPP 11.2 s, MVT 6.3 s, ExifTool 0.45 s, YARA 0.38 s, SQLite 0.28 s. ALEAPP dominates run time and its variance explains the wide wall-time range. The image check `image_file_time` confirms NOTE.TXT's modification date (2026-09-20) reaches the timeline.
+
+## NIST NTFS E01 test image
+
+`ntfs1-gen1.E01` (NIST CFReDS NTFS test image, 9.3 MB, single segment) with The Sleuth Kit, ExifTool and SQLite:
+
+| Measure | Before this milestone | After |
+|---|---|---|
+| Sleuth Kit findings | 35 file names | 39 entries with times, plus 55 timeline events |
+| Timeline events | 0 | 55 (original 2008-2009 NTFS times) |
+| ExifTool status | `failed` (exit 1) | `partial`: could not read 4 of 12 files (the NTFS-encrypted copies) |
+| Evidence integrity | verified | verified |
+
+The 4 files in `Encrypted/` are EFS-encrypted; the project does not decrypt them, which is expected. Their `RAW/` and `Compressed/` copies were read correctly.
+
 ## Remaining evaluation
 
 Plaso needs a real compatible runtime and dataset. MVT bugreport/AndroidQF modes need their own fixtures. Real acquired Android images, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.

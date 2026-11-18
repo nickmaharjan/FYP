@@ -1,5 +1,4 @@
 import importlib.util
-import importlib.metadata
 import json
 import shutil
 import sys
@@ -51,17 +50,17 @@ def doctor(config=None):
     for name in TOOL_NAMES:
         if name == "sqlite":
             import sqlite3
-            result[name] = {"available": True, "backend": "Python sqlite3", "version": sqlite3.sqlite_version}
+            result[name] = {"available": True, "backend": "Python sqlite3"}
         elif name == "yara":
             ready = importlib.util.find_spec("yara") is not None
             result[name] = {"available": ready, "backend": "yara-python", "hint": "pip install yara-python"}
-            if ready:
-                result[name]["version"] = importlib.metadata.version("yara-python")
         else:
             command = command_for(name, config)
             available = bool(command) and (name != "plaso" or bool(command_for("psort", config)))
             result[name] = {"available": available, "command": command,
                             "hint": "Set commands in tools.local.json or add executables to PATH"}
-            if name == "mvt" and importlib.util.find_spec("mvt"):
-                result[name]["version"] = importlib.metadata.version("mvt")
+    from .registry import detect_version
+    for name, state in result.items():
+        if state["available"]:
+            state["version"], state["version_source"] = detect_version(name, state.get("command"))
     return result

@@ -57,7 +57,8 @@ def create_demo(root):
     write_json(root / "expected.json", {"description": "Synthetic training evidence, never a real compromise",
                "sqlite_sms_rows": 1, "mvt_sms_rows": 1, "yara_rule": "DFIR_Demo_Marker",
                "shared_url": "https://training-ioc.example/check", "media_files": 1,
-               "image_file": "NOTE.TXT", "sqlite_database_files": 2})
+               "image_file": "NOTE.TXT", "image_file_time": {"file": "NOTE.TXT", "date": "2026-09-20"},
+               "sqlite_database_files": 2})
     return {"evidence": evidence, "yara_rules": rules, "iocs": iocs}
 
 

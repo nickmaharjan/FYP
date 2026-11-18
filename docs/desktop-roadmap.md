@@ -30,6 +30,20 @@ This is an initial development shell. It does not yet package a Windows installe
 - Re-run interrupted cases: the pipeline now writes `status.json` before any tool runs, recording the evidence path, tools, limits, YARA rules and indicators. Opening an `incomplete` case in the desktop offers to re-run it with exactly those options in a new case folder; the interrupted folder is kept for archive or deletion. Re-run is refused, with the reason, when the evidence or rules have moved, or when the case predates this change. Logic: `rerun_options()` in `src/mobile_df/case_library.py`; tests: `tests/test_resume.py`.
 - Case handoff: **Export handoff ZIP** on the case review screen (and `python -m mobile_df.handoff export|verify`) packages a finished case with a per-file SHA-256 manifest and a `.sha256` file for the ZIP, so a recipient can verify nothing changed. Evidence working copies are never packaged; native tool output is opt-in. Logic: `src/mobile_df/handoff.py`; tests: `tests/test_handoff.py`.
 
+## Milestone integration increment (18 November 2026)
+
+Cross-stream work toward the 50% gate (each line names the stream it advances):
+
+- Forensic integrations: The Sleuth Kit adapter now reads `fls -m` body files, so disk images get a real timeline (MACB-labelled modified/accessed/changed/created times), deleted entries are flagged, NTFS `$FILE_NAME` times are kept, and a `$STANDARD_INFORMATION`-before-`$FILE_NAME` creation time is reported as a review lead. FAT times are read as UTC so results do not depend on the examiner's time zone.
+- Forensic integrations: clear failure states. ExifTool per-file errors (for example encrypted files) make the run `partial` with the count and file names, instead of `failed`; step-level reasons now reach the tool run.
+- Dependency manager: `tool-packs.json` is the single list of pinned packs for `setup.ps1` and the new `mobile_df.registry` (tool purpose, licence, install source, detected version, pack SHA-256 verification, licence notices). Every case records each tool's version.
+- Verification and evaluation: `mobile_df.benchmark` repeats both controlled fixtures, scores them, and writes accuracy and timing tables; a new `image_file_time` expectation checks image timestamps. Results are in [evaluation](evaluation.md).
+- Desktop: **View logs** on the TOOL RUNS tab (command, exit code, stderr/stdout tail, read only from the case logs folder), tool versions per run, and a Tool readiness screen with versions, pinned pack versions, licences, **Verify tool packs** and **Licence notices**.
+- Documentation: [installation guide](installation.md) with online/offline install, checks, first controlled case and troubleshooting.
+- Tests: `tests/test_integrations.py` (52 tests in total).
+
+Gate status after this increment: create/resume/review is in place; documented install with verified packs exists but there is no in-app install/update yet; adapters log versions and distinguish partial from failed, but Plaso still has no real runtime; a reproducible controlled evaluation and installation guide exist, but real Android datasets are still needed.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.
