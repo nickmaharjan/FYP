@@ -84,6 +84,21 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse((self.root / "outside.exe").exists())
         self.assertFalse((self.tools / "evil").exists())
 
+    def test_failed_swap_restores_previous_install(self):
+        from unittest import mock
+        install_pack("demo", self.packs, self.tools, self.config, pack_dir=self.kit, offline=True)
+        real_rename = Path.rename
+
+        def locked(path, target):
+            if Path(path).name == "demo.new":
+                raise PermissionError("file in use")
+            return real_rename(path, target)
+
+        with mock.patch.object(Path, "rename", locked), self.assertRaises(PermissionError):
+            install_pack("demo", self.packs, self.tools, self.config, pack_dir=self.kit, offline=True)
+        self.assertEqual((self.tools / "demo/bin/demo.exe").read_bytes(), b"v2", "previous install restored")
+        self.assertFalse((self.tools / "demo.old").exists())
+
     def test_cancel_keeps_previous_install(self):
         install_pack("demo", self.packs, self.tools, self.config, pack_dir=self.kit, offline=True)
         cancel = threading.Event()

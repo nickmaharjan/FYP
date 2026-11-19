@@ -182,20 +182,26 @@ def install_pack(name, packs=None, tools_dir=TOOLS_DIR, config_path=None, pack_d
             archive.unlink(missing_ok=True)
             raise ValueError(f"{name} pack does not match its pinned SHA-256; it was deleted and nothing was installed")
     staging = tools_dir / f"{name}.new"
+    current, previous = tools_dir / name, tools_dir / f"{name}.old"
     _remove_tree(staging)
     try:
         _unpack(archive, staging, progress, cancel)
         if not (staging / Path(pack["binary"]).relative_to(name)).is_file():
             raise ValueError(f"{name} pack does not contain {pack['binary']}")
-        current, previous = tools_dir / name, tools_dir / f"{name}.old"
         _remove_tree(previous)
         if current.exists():
             current.rename(previous)
         staging.rename(current)
-        _remove_tree(previous)
     except BaseException:
+        # Put the previous installation back if it was moved aside but the new copy never arrived.
+        if previous.exists() and not current.exists():
+            previous.rename(current)
         _remove_tree(staging)
         raise
+    try:
+        _remove_tree(previous)
+    except OSError:
+        pass   # a leftover .old folder is harmless and is cleared on the next install
     state = _state(tools_dir)
     state[name] = {"version": pack["version"], "sha256": pack["sha256"].lower(), "installed_utc": utc_now(),
                    "source": source}
