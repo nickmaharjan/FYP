@@ -54,6 +54,10 @@ Gate status after this increment: create/resume/review is in place; documented i
 
 Gate status: (1) create/resume/review: done. (2) discover and install supported tools through documented local flows: done for the portable packs; Python packages still come from `setup.ps1`. (3) adapters with logged versions and clear failure states: done, except a real Plaso run still needs to be recorded. (4) reproducible controlled evaluation and installation guide: done for synthetic fixtures; real authorised Android datasets and a clean-machine install test remain.
 
+## Split image support (19 November 2026)
+
+- Forensic integrations: split disk images (EnCase `.E01`/`.E02`/... and raw `.001`/`.002`/...) are found from the first segment, hashed, copied and verified as one evidence set, and passed to The Sleuth Kit correctly. An incomplete EnCase set is detected from its final `next`/`done` section and reported by name as a case warning and as the Sleuth Kit failure reason. Found by testing `nps-2008-jean.E01` without its `.E02`. Tests: `tests/test_segments.py`.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.

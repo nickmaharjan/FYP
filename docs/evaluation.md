@@ -89,6 +89,18 @@ The ZIP case has 4 fewer findings than the folder only because the inventory lis
 
 The 4 files in `Encrypted/` are EFS-encrypted; the project does not decrypt them, which is expected. Their `RAW/` and `Compressed/` copies were read correctly.
 
+## NPS 2008 "Jean" disk image (incomplete segment set)
+
+`nps-2008-jean.E01` (Windows XP laptop, 10 GiB disk, NTFS partition at sector 63; 1.5 GB first segment only) analysed with `--image-offset 63`. The filesystem header is readable, but the root directory index lies about 7.2 GB into the disk, beyond the first segment, so `fls` fails. The `.E01` ends with a `next` section, confirming that `nps-2008-jean.E02` is needed.
+
+| Measure | Before split-image support | After |
+|---|---|---|
+| Sleuth Kit status | `failed`: "Tool did not complete successfully; inspect logs" | `failed`: "Image segment set is incomplete: nps-2008-jean.E01 says more data follows but nps-2008-jean.E02 is missing" |
+| Case warning | none | the same message |
+| Evidence integrity | verified | verified |
+
+With both segments present, the pipeline now copies and verifies both; this has been verified with a raw split FAT12 image read by the real Sleuth Kit, but not yet with a real multi-segment E01 set.
+
 ## Remaining evaluation
 
 Plaso needs a real compatible runtime and dataset. MVT bugreport/AndroidQF modes need their own fixtures. Real acquired Android images, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.

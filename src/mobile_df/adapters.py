@@ -27,6 +27,8 @@ class Context:
     image_offset: int = 0
     cancel: object = None
     steps: list = field(default_factory=list)
+    segments: list = field(default_factory=list)     # every file of a split disk image, first segment first
+    segment_problem: str | None = None
 
     def run(self, name, command, env=None):
         env = dict(env or {})
@@ -262,8 +264,16 @@ class SleuthKitAdapter(Adapter):
     def applicable(self, ctx):
         return None if ctx.kind == "image" and ctx.evidence.is_file() else "Filesystem tools require a raw filesystem/disk image"
 
+    def image_arguments(self, ctx):
+        # libewf finds .E02 onwards from the .E01 name; raw splits must be listed in order.
+        segments = ctx.segments or [ctx.evidence]
+        return [str(path) for path in segments] if segments[0].suffix == ".001" else [str(ctx.evidence)]
+
     def run(self, ctx):
-        step = ctx.run(self.name, command_for(self.name, ctx.config) + ["-r", "-m", "/", "-z", "UTC", "-o", str(ctx.image_offset), str(ctx.evidence)])
+        images = self.image_arguments(ctx)
+        step = ctx.run(self.name, command_for(self.name, ctx.config) + ["-r", "-m", "/", "-z", "UTC", "-o", str(ctx.image_offset)] + images)
+        if step["status"] != "success" and ctx.segment_problem:
+            step["reason"] = ctx.segment_problem
         with (ctx.output / step["stdout_log"]).open(encoding="utf-8", errors="replace") as stream:
             entries = parse_bodyfile(stream)
         results = []
@@ -298,7 +308,7 @@ class SleuthKitAdapter(Adapter):
         recover = command_for("tsk_recover", ctx.config)
         if recover and step["status"] == "success":
             directory = ctx.directory("recovered")
-            recovery = ctx.run("sleuthkit-recover", recover + ["-a", "-o", str(ctx.image_offset), str(ctx.evidence), str(directory)])
+            recovery = ctx.run("sleuthkit-recover", recover + ["-a", "-o", str(ctx.image_offset)] + images + [str(directory)])
             if recovery["status"] == "success":
                 ctx.evidence = directory
         return results

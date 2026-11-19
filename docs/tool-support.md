@@ -22,6 +22,12 @@ A tool run is `partial` rather than `failed` when the tool processed the input b
 
 FAT and exFAT store local time without a time zone. The Sleuth Kit adapter reads them as UTC (`-z UTC`) so results do not depend on the examiner computer's time zone; adjust for the device's zone when interpreting FAT times.
 
+## Split disk images
+
+Choose the first segment (`disk.E01` or `disk.001`) and keep the others beside it. The pipeline finds the rest in order (`.E02`, `.E03`, ... then `.EAA`...; or `.002`, `.003`, ...), hashes and copies every segment into the working folder, and verifies all of them again after analysis; `parameters.image_segments` lists them. The Sleuth Kit is given the first EnCase segment (libewf opens the rest by name) or every raw segment in order.
+
+An EnCase segment ends with a `next` section when more segments follow and `done` when it is the last. If the last segment found ends with `next`, the case warns that the set is incomplete and names the missing file, and a Sleuth Kit failure gives that as its reason. Raw splits have no such marker, so a missing raw segment cannot be detected. Choosing a later segment (for example `disk.E02`) produces a warning to choose the first one.
+
 ## Known limitation: compressed containers and YARA
 
 YARA matches bytes in the files it is given. An Android `.ab` backup is zlib-compressed, so rules do not match content inside it (the synthetic backup's marker is not found). MVT reads the backup's content instead. Extract a backup to a folder first if YARA should scan the app data.
