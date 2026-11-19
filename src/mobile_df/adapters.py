@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .config import command_for
+from .config import command_for, plaso_docker_image
 from .core import artifact, relative_source, timestamp_from
 from .runner import execute
 
@@ -304,23 +304,60 @@ class SleuthKitAdapter(Adapter):
         return results
 
 
+CONTAINER_EVIDENCE, CONTAINER_OUTPUT = "/evidence", "/output"
+
+
+def container_relative(value, evidence_name):
+    """Map a path seen inside the Plaso container back to a path relative to the evidence."""
+    text = str(value or "")
+    root = f"{CONTAINER_EVIDENCE}/{evidence_name}"
+    if text == root:
+        return evidence_name
+    if text.startswith(root + "/"):
+        return text[len(root) + 1:]
+    # Plaso shows paths inside an image or archive as "<source>:/inner/path" or just "/inner/path".
+    return text.split(":", 1)[1].lstrip("/") if text.startswith(root + ":") else text.lstrip("/")
+
+
 class PlasoAdapter(Adapter):
     name = "plaso"
+
+    def _docker(self, ctx, image, mounts, arguments):
+        command = command_for("docker", ctx.config) + ["run", "--rm", "--network", "none"]
+        for host, container, mode in mounts:
+            command += ["-v", f"{host}:{container}:{mode}"]
+        return command + [image] + arguments
 
     def run(self, ctx):
         directory = ctx.directory(self.name)
         storage, events = directory / "timeline.plaso", directory / "events.jsonl"
-        step = ctx.run(self.name, command_for(self.name, ctx.config) + ["--storage-file", str(storage), str(ctx.evidence)])
+        image = None if command_for(self.name, ctx.config) and command_for("psort", ctx.config) else plaso_docker_image(ctx.config)
+        if image:
+            # Evidence is mounted read-only and the container has no network access.
+            evidence_mount = (str(ctx.evidence.parent), CONTAINER_EVIDENCE, "ro")
+            output_mount = (str(directory), CONTAINER_OUTPUT, "rw")
+            source = f"{CONTAINER_EVIDENCE}/{ctx.evidence.name}"
+            extract = self._docker(ctx, image, [evidence_mount, output_mount],
+                                   ["log2timeline.py", "--status_view", "none", "--unattended",
+                                    "--storage-file", f"{CONTAINER_OUTPUT}/{storage.name}", source])
+            export_command = self._docker(ctx, image, [output_mount],
+                                          ["psort.py", "--status_view", "none", "-o", "json_line", "-w",
+                                           f"{CONTAINER_OUTPUT}/{events.name}", f"{CONTAINER_OUTPUT}/{storage.name}"])
+            to_path = lambda value: container_relative(value, ctx.evidence.name)
+        else:
+            extract = command_for(self.name, ctx.config) + ["--storage-file", str(storage), str(ctx.evidence)]
+            export_command = command_for("psort", ctx.config) + ["-o", "json_line", "-w", str(events), str(storage)]
+            to_path = lambda value: relative_source(value, ctx.evidence)
+        step = ctx.run(self.name, extract)
         if step["status"] != "success":
             return []
-        export = ctx.run("plaso-export", command_for("psort", ctx.config) + ["-o", "json_line", "-w", str(events), str(storage)])
-        if export["status"] != "success":
+        export = ctx.run("plaso-export", export_command)
+        if export["status"] != "success" or not events.is_file():
             return []
         results = []
         for index, row in enumerate(json_lines(events, ctx.max_findings)):
             stamp, basis = timestamp_from(row)
-            results.append(artifact(self.name, "timeline_event",
-                                   relative_source(row.get("filename", row.get("display_name", "")), ctx.evidence),
+            results.append(artifact(self.name, "timeline_event", to_path(row.get("filename", row.get("display_name", ""))),
                                    row, stamp, basis, provenance={"output": events.relative_to(ctx.output).as_posix(), "line": index + 1}))
         return results
 

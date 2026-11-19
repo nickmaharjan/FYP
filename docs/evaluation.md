@@ -63,6 +63,19 @@ Verified on macOS with Python 3.14 (SQLite and ExifTool only available): the dem
 
 Mean per-tool time in the extraction case: ALEAPP 11.2 s, MVT 6.3 s, ExifTool 0.45 s, YARA 0.38 s, SQLite 0.28 s. ALEAPP dominates run time and its variance explains the wide wall-time range. The image check `image_file_time` confirms NOTE.TXT's modification date (2026-09-20) reaches the timeline.
 
+## Four-case controlled benchmark (18 November 2026, second run)
+
+Two more evidence types were added to the controlled fixtures: the extraction as a ZIP export (unpacked into the case before analysis) and an unencrypted Android `.ab` backup of the SMS app (checked by MVT). `python -m mobile_df.benchmark --runs 3`, same machine and tools as above:
+
+| Case | Verdicts | Check pass rate | Wall time mean (min-max) s | Findings | Timeline events | Same findings every run |
+|---|---|---|---|---|---|---|
+| Extraction folder (5 tools) | pass x3 | 100% | 15.3 (14.9-15.5) | 26 | 11 | yes |
+| ZIP export (5 tools) | pass x3 | 100% | 15.2 (14.8-15.5) | 22 | 11 | yes |
+| Android `.ab` backup (MVT) | pass x3 | 100% | 1.9 (1.8-1.9) | 4 | 3 | yes |
+| FAT12 image (Sleuth Kit + YARA) | pass x3 | 100% | 0.66 (0.53-0.77) | 8 | 1 | yes |
+
+The ZIP case has 4 fewer findings than the folder only because the inventory lists one evidence file (the ZIP) instead of five; tool findings are identical. YARA is not scored on the backup: the backup is compressed, so the marker cannot match (see [tool support](tool-support.md#known-limitation-compressed-containers-and-yara)); running it gives `fail` for `yara_rule`, which is the correct observation.
+
 ## NIST NTFS E01 test image
 
 `ntfs1-gen1.E01` (NIST CFReDS NTFS test image, 9.3 MB, single segment) with The Sleuth Kit, ExifTool and SQLite:

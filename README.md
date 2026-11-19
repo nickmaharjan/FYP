@@ -78,6 +78,12 @@ To run both controlled fixtures several times and get accuracy and timing tables
 
 It writes `benchmark.json` and `benchmark.md` (verdicts, check pass rate, wall time, per-tool time, findings, tool versions).
 
+To install, update or repair the portable tools without the setup script (also available as buttons on the desktop Tool readiness screen):
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.installer install all
+```
+
 To list tools, versions and licences, or check downloaded packs against their pinned SHA-256:
 
 ```powershell
