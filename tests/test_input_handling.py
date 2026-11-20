@@ -3,6 +3,7 @@
 Test plan section 5 ("Encrypted / unsupported input"). All fixtures are synthetic.
 """
 import sqlite3
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -52,6 +53,18 @@ class InputHandlingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "--kind image"):
                     analyze(damaged, self.root / ("case-" + name), tools=["sqlite"], config={})
                 self.assertFalse((self.root / ("case-" + name)).exists(), "refused before a case folder is made")
+        # A real .tar.gz cut off early (like a stopped download) made tarfile.is_tarfile raise
+        # EOFError before the check above could run; it must give the same visible refusal.
+        source = self.root / "n.txt"
+        source.write_text("synthetic " * 50)
+        with tarfile.open(self.root / "full.tar.gz", "w:gz") as archive:
+            archive.add(source, "n.txt")
+        for size in (5, 20, 60):
+            with self.subTest(truncated_bytes=size):
+                cut = self.root / f"cut{size}.tar.gz"
+                cut.write_bytes((self.root / "full.tar.gz").read_bytes()[:size])
+                with self.assertRaisesRegex(ValueError, "not a readable ZIP or TAR"):
+                    detect_kind(cut)
         # The investigator can still override the guess explicitly.
         self.assertEqual(detect_kind(self.root / "partial.zip", "image"), "image")
         unnamed = self.root / "disk.img"
