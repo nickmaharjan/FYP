@@ -51,7 +51,8 @@ class DesktopApp:
         self.settings = load_settings(self.settings_path)
         self.data_dir_override = data_dir is not None
         self.data_dir = Path(data_dir or self.settings["data_dir"]).resolve()
-        self.config = load_config(config_path)
+        self.config_path = Path(config_path or "tools.local.json").resolve()
+        self.config = load_config(self.config_path)
         self.availability = doctor(self.config)
         self.active_view = "cases"
         self.busy = False
@@ -180,6 +181,7 @@ class DesktopApp:
         side.pack(side="right", fill="y")
         side.pack_propagate(False)
 
+        self._setup_checklist(main)
         command = tk.Frame(main, bg=PALETTE["surface"], padx=20, pady=18)
         command.pack(fill="x", pady=(0, 27))
         tk.Label(command, text="START A CASE", bg=PALETTE["surface"], fg=PALETTE["muted"],
@@ -228,6 +230,31 @@ class DesktopApp:
         tk.Label(side, text=f"{available} OF {len(self.availability)} READY", bg=PALETTE["rail"],
                  fg=PALETTE["muted"], font=(FONT, 8, "bold")).pack(anchor="w")
         self._button(side, "Review tool setup", self.show_tools).pack(anchor="w", pady=(12, 0))
+
+    def _setup_checklist(self, parent):
+        from .readiness import checklist_complete, setup_checklist
+        items = setup_checklist(self.availability, self.settings, self.data_dir)
+        if checklist_complete(items) and all(item["done"] for item in items if item["key"] == "rules"):
+            return
+        band = tk.Frame(parent, bg=PALETTE["surface"], padx=20, pady=14)
+        band.pack(fill="x", pady=(0, 14))
+        done = sum(item["done"] for item in items)
+        tk.Label(band, text=f"SETUP CHECKLIST  /  {done} OF {len(items)} DONE", bg=PALETTE["surface"],
+                 fg=PALETTE["accent"], font=(FONT, 8, "bold")).pack(anchor="w", pady=(0, 6))
+        actions = {"tools": ("Tool readiness", self.show_tools), "settings": ("Settings", self.show_settings)}
+        for item in items:
+            row = tk.Frame(band, bg=PALETTE["surface"])
+            row.pack(fill="x", pady=2)
+            mark, color = ("DONE", PALETTE["success"]) if item["done"] else (
+                ("TO DO", PALETTE["warning"]) if item["required"] else ("OPTIONAL", PALETTE["muted"]))
+            tk.Label(row, text=mark, width=9, anchor="w", bg=PALETTE["surface"], fg=color,
+                     font=(FONT, 8, "bold")).pack(side="left")
+            tk.Label(row, text=f"{item['title']}  -  {item['detail']}", anchor="w", bg=PALETTE["surface"],
+                     fg=PALETTE["ink"] if not item["done"] else PALETTE["muted"], font=(FONT, 9),
+                     wraplength=620, justify="left").pack(side="left")
+            if not item["done"] and item["action"] in actions:
+                label, command = actions[item["action"]]
+                self._button(row, label, command).pack(side="right")
 
     def _refresh_case_table(self):
         table = self.case_table
@@ -739,6 +766,7 @@ class DesktopApp:
     def show_tools(self):
         if self.busy:
             return
+        from .installer import pack_status
         from .registry import TOOLS, load_packs
         self.active_view = "tools"
         self._activate_nav("tools")
@@ -747,16 +775,23 @@ class DesktopApp:
                       "Installed forensic tools, the versions recorded in every case, and their licences.")
         try:
             packs = load_packs()
+            states = pack_status(packs)
         except (OSError, ValueError):
-            packs = {}
+            packs, states = {}, {}
+        missing = [name for name, state in states.items() if state["action"]]
         actions = tk.Frame(self.content, bg=PALETTE["page"])
         actions.pack(fill="x", pady=(0, 14))
-        self._button(actions, "Verify tool packs", self._verify_packs, primary=True).pack(side="left")
+        if missing:
+            self._button(actions, f"Install / update {len(missing)} tool(s)",
+                         lambda: self._install_tools(missing), primary=True).pack(side="left", padx=(0, 8))
+        self._button(actions, "Install from offline kit", lambda: self._install_tools(sorted(packs), offline=True)
+                     ).pack(side="left", padx=(0, 8))
+        self._button(actions, "Verify tool packs", self._verify_packs, primary=not missing).pack(side="left")
         self._button(actions, "Licence notices", self._show_notices).pack(side="left", padx=(8, 0))
         self._button(actions, "Re-check tools", self._recheck_tools).pack(side="left", padx=(8, 0))
         columns = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=14)
         columns.pack(fill="x", pady=(0, 3))
-        widths = (("TOOL", 26), ("STATUS", 12), ("VERSION", 12), ("PINNED", 10), ("LICENCE", 46), ("INSTALL", 30))
+        widths = (("TOOL", 26), ("STATUS", 12), ("VERSION", 12), ("PINNED", 10), ("LICENCE", 44), ("INSTALL", 26))
         for label, width in widths:
             tk.Label(columns, text=label, bg=PALETTE["surface"], fg=PALETTE["muted"],
                      width=width, anchor="w", font=(FONT, 8, "bold")).pack(side="left")
@@ -773,9 +808,86 @@ class DesktopApp:
             for (label, foreground), (_, width) in zip(values, widths):
                 tk.Label(row, text=label, bg=PALETTE["surface"], fg=foreground,
                          width=width, anchor="w", font=(FONT, 9)).pack(side="left")
-        tk.Label(self.content, text="Missing tools: run scripts\\setup.ps1 (online) or scripts\\setup.ps1 -Offline "
-                                    "-PackDir <kit> (offline). See docs/installation.md.",
+            state = states.get(name)
+            if state:
+                label = state["action"] or "Reinstall"
+                self._button(row, label, lambda tool=name: self._install_tools([tool]),
+                             primary=bool(state["action"])).pack(side="right")
+        tk.Label(self.content, text="Install, update and repair download the pinned release over HTTPS (or copy it from "
+                                    "an offline kit), check its SHA-256, and only then replace the installed copy. "
+                                    "Python packages (YARA, MVT) are installed by scripts\\setup.ps1. See docs/installation.md.",
+                 wraplength=1000, justify="left",
                  bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9)).pack(anchor="w", pady=(18, 0))
+
+    def _install_tools(self, names, offline=False):
+        from .installer import InstallCancelled, install_pack
+        if self.busy or not names:
+            return
+        pack_dir = None
+        if offline:
+            pack_dir = filedialog.askdirectory(title="Choose the offline kit folder (made with setup.ps1 -SavePacks)")
+            if not pack_dir:
+                return
+        elif not messagebox.askyesno("Install tools", "Download and install: " + ", ".join(names) + "?\n\n"
+                                     "Each pack is downloaded from its upstream release over HTTPS and checked "
+                                     "against the pinned SHA-256 before anything is replaced."):
+            return
+        self.busy = True
+        cancel = threading.Event()
+        window = tk.Toplevel(self.root, bg=PALETTE["page"])
+        window.title("Installing tools")
+        window.geometry("520x170")
+        window.transient(self.root)
+        text = tk.StringVar(value="Starting…")
+        tk.Label(window, textvariable=text, bg=PALETTE["page"], fg=PALETTE["ink"], font=(FONT, 10),
+                 wraplength=480, justify="left").pack(anchor="w", padx=18, pady=(18, 8))
+        bar = ttk.Progressbar(window, style="DF.Horizontal.TProgressbar", maximum=100)
+        bar.pack(fill="x", padx=18)
+        self._button(window, "Cancel", cancel.set).pack(anchor="e", padx=18, pady=14)
+        window.protocol("WM_DELETE_WINDOW", cancel.set)
+
+        def show(message, percent=None):
+            text.set(message)
+            if percent is None:
+                bar.configure(mode="indeterminate")
+                bar.start(12)
+            else:
+                bar.stop()
+                bar.configure(mode="determinate", value=percent)
+
+        def work():
+            done, errors = [], []
+            for name in names:
+                def progress(stage, current, total, name=name):
+                    if stage == "download":
+                        message = f"{name}: downloading {current // 1048576} MB" + (f" of {total // 1048576} MB" if total else "")
+                        percent = current * 100 / total if total else None
+                    elif stage == "unpack":
+                        message, percent = f"{name}: unpacking", current * 100 / max(total, 1)
+                    else:
+                        message, percent = f"{name}: checking SHA-256", None
+                    self.root.after(0, lambda m=message, p=percent: show(m, p))
+                try:
+                    if cancel.is_set():
+                        raise InstallCancelled("Cancelled")
+                    summary = install_pack(name, config_path=self.config_path, pack_dir=pack_dir,
+                                           offline=offline, progress=progress, cancel=cancel)
+                    done.append(f"{name} {summary['version']}")
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+            self.root.after(0, lambda: finish(done, errors))
+
+        def finish(done, errors):
+            window.destroy()
+            self.busy = False
+            self.config = load_config(self.config_path)
+            self.availability = doctor(self.config)
+            self.show_tools()
+            message = ("Installed: " + ", ".join(done) if done else "Nothing was installed.") + (
+                "\n\nProblems:\n" + "\n".join(errors) if errors else "")
+            (messagebox.showwarning if errors else messagebox.showinfo)("Install tools", message)
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _verify_packs(self):
         from .registry import verify_packs

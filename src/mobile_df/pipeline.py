@@ -8,7 +8,7 @@ from pathlib import Path
 from .adapters import ADAPTERS, Context
 from .config import doctor, load_config
 from .core import TOOL_NAMES, artifact, correlate, sha256, utc_now, write_json
-from .evidence import detect_kind, inventory, is_link, stage
+from .evidence import detect_kind, image_segments, inventory, is_link, stage
 from .report import render_report
 
 
@@ -77,8 +77,13 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
             progress(message)
 
     try:
-        notify("Hashing original evidence")
-        result["inventory"] = inventory(evidence)
+        segments, segment_problem = image_segments(evidence) if kind == "image" else ([evidence], None)
+        if len(segments) > 1:
+            result["parameters"]["image_segments"] = [path.name for path in segments]
+        if segment_problem:
+            result["warnings"].append(segment_problem)
+        notify("Hashing original evidence" + (f" ({len(segments)} segments)" if len(segments) > 1 else ""))
+        result["inventory"] = inventory(evidence, segments if evidence.is_file() else None)
         write_json(output / "manifest.json", result["inventory"])
         notify("Creating and verifying working copy")
         staged = stage(evidence, output, result["inventory"], kind, int(max_extract_gb * 1024**3))
@@ -97,6 +102,9 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
                     indicators = destination
         ctx = Context(staged, output, kind, config, timeout, max_rows, max_findings,
                       rules, indicators, mvt_mode, image_offset, cancel)
+        if kind == "image":
+            ctx.segments = [staged.parent / path.name for path in segments]
+            ctx.segment_problem = segment_problem
         for adapter in ADAPTERS:
             run = {"tool": adapter.name, "status": "pending", "findings_count": 0, "steps": [],
                    "tool_version": result["tool_availability"][adapter.name].get("version")}
@@ -135,7 +143,7 @@ def analyze(evidence, output, case_id="case-001", yara_rules=None, timeout=300, 
                 notify(f"{adapter.name}: {run['status']} ({run['findings_count']} findings)")
             write_status()
         notify("Verifying original evidence after analysis")
-        after = inventory(evidence)
+        after = inventory(evidence, segments if evidence.is_file() else None)
         result["integrity"] = {"status": "verified" if after == result["inventory"] else "changed",
                                "checked_utc": utc_now(), "method": "Full SHA-256, path, size and mtime comparison before and after analysis"}
         if after != result["inventory"]:

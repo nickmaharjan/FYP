@@ -78,6 +78,12 @@ To run both controlled fixtures several times and get accuracy and timing tables
 
 It writes `benchmark.json` and `benchmark.md` (verdicts, check pass rate, wall time, per-tool time, findings, tool versions).
 
+To install, update or repair the portable tools without the setup script (also available as buttons on the desktop Tool readiness screen):
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.installer install all
+```
+
 To list tools, versions and licences, or check downloaded packs against their pinned SHA-256:
 
 ```powershell
@@ -89,7 +95,7 @@ Each expectation is reported as `pass`, `fail`, `skipped` (with the reason, e.g.
 
 The output directory must be new and separate from evidence. `--tools sqlite yara aleapp` selects a subset. `--timeout 600` controls each subprocess; `--max-rows 2000` controls SQLite row export. Image analysis supports `--image-offset` in sectors and attempts allocated-file recovery with `tsk_recover` before other tools. Supply a known partition offset for partitioned disk images; the default is zero for filesystem images.
 
-Accepted inputs: extraction directories, ZIP/TAR archives, raw filesystem images supported by The Sleuth Kit, and Android `.ab` backups supported by MVT. MVT chooses backup mode for a directory containing `apps`; use `--mvt-mode bugreport` or `--mvt-mode androidqf` for those extraction types. MVT backup mode focuses on SMS/MMS and is not a general Android filesystem analyzer. This prototype analyzes acquired evidence; it does not acquire or unlock phones.
+Accepted inputs: extraction directories, ZIP/TAR archives, raw and EnCase (E01) disk images supported by The Sleuth Kit (including split sets: choose the first segment, `.E01` or `.001`, with the others in the same folder), and Android `.ab` backups supported by MVT. MVT chooses backup mode for a directory containing `apps`; use `--mvt-mode bugreport` or `--mvt-mode androidqf` for those extraction types. MVT backup mode focuses on SMS/MMS and is not a general Android filesystem analyzer. This prototype analyzes acquired evidence; it does not acquire or unlock phones.
 
 ## Case outputs
 

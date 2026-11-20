@@ -48,7 +48,7 @@ TOOLS = {
                   "version_args": ["-V"]},
     "plaso": {"title": "Plaso (log2timeline)", "purpose": "Build a super-timeline from many artifact types",
               "license": "Apache-2.0", "homepage": "https://github.com/log2timeline/plaso",
-              "install": "Separate Linux environment (see docs/tool-support.md)", "version_args": ["--version"]},
+              "install": "Docker image (plaso_docker_image) or a Linux environment", "version_args": ["--version"]},
 }
 
 _VERSION_CACHE = {}

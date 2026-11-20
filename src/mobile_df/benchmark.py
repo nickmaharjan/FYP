@@ -1,8 +1,10 @@
 """Repeatable controlled evaluation: run the synthetic fixtures several times and report accuracy and speed.
 
-Each repetition analyses two controlled cases built by ``mobile_df.demo``:
+Each repetition analyses four controlled cases built by ``mobile_df.demo``:
 
 * extraction - the Android-shaped folder, with every installed tool selected
+* archive    - the same folder as a ZIP export, unpacked into the case before analysis
+* backup     - an unencrypted Android backup (.ab) of the SMS app, checked by MVT
 * image      - the FAT12 disk image, with The Sleuth Kit and YARA
 
 Both are scored against the fixture's ``expected.json`` (see ``mobile_df.evaluation``).
@@ -50,6 +52,12 @@ def run_benchmark(output, runs=3, config=None, progress=None):
     cases = {
         "extraction": {"evidence": fixture["evidence"], "tools": [t for t in TOOL_NAMES if t in available and t != "sleuthkit"],
                        "extra": {"yara_rules": fixture["yara_rules"], "iocs": fixture["iocs"]}},
+        "archive": {"evidence": output / "fixture" / "training-extraction.zip",
+                    "tools": [t for t in TOOL_NAMES if t in available and t != "sleuthkit"],
+                    "extra": {"yara_rules": fixture["yara_rules"], "iocs": fixture["iocs"]}},
+        # YARA is not run on the backup: its content is zlib-compressed, so byte rules cannot match.
+        "backup": {"evidence": output / "fixture" / "training-backup.ab",
+                   "tools": [t for t in ("mvt",) if t in available], "extra": {"iocs": fixture["iocs"]}},
         "image": {"evidence": output / "fixture" / "training-fat12.img",
                   "tools": [t for t in ("sleuthkit", "yara") if t in available],
                   "extra": {"yara_rules": fixture["yara_rules"]}},
@@ -57,6 +65,8 @@ def run_benchmark(output, runs=3, config=None, progress=None):
     records = []
     for repetition in range(1, runs + 1):
         for name, case in cases.items():
+            if not case["tools"]:
+                continue   # e.g. the backup case needs MVT
             if progress:
                 progress(f"Run {repetition}/{runs}: {name}")
             started = time.perf_counter()
@@ -74,6 +84,8 @@ def run_benchmark(output, runs=3, config=None, progress=None):
                                       for r in result["tool_runs"] if r["status"] != "disabled"}})
     summary = {}
     for name, case in cases.items():
+        if not case["tools"]:
+            continue
         mine = [r for r in records if r["case"] == name]
         checks = {}
         for record in mine:

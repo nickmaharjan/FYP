@@ -1,5 +1,7 @@
 """Create verified working copies; never pass the original evidence to tools."""
 import os
+import re
+import string
 import shutil
 import stat
 import tarfile
@@ -29,10 +31,64 @@ def files_under(root):
     return sorted(files)
 
 
-def inventory(root):
+def inventory(root, files=None):
+    """Hash every evidence file. ``files`` lists all segments of a split image (default: just ``root``)."""
     base = root if root.is_dir() else root.parent
+    paths = files_under(root) if files is None else [Path(f) for f in files]
     return [{"path": path.relative_to(base).as_posix(), "size": path.stat().st_size,
-             "mtime_ns": path.stat().st_mtime_ns, "sha256": sha256(path)} for path in files_under(root)]
+             "mtime_ns": path.stat().st_mtime_ns, "sha256": sha256(path)} for path in paths]
+
+
+def _ewf_suffixes():
+    """EnCase segment names in order: .E01-.E99, then .EAA-.EZZ."""
+    yield from (f"E{n:02d}" for n in range(1, 100))
+    yield from (f"E{a}{b}" for a in string.ascii_uppercase for b in string.ascii_uppercase)
+
+
+def ewf_end_marker(path):
+    """The type of an EnCase segment's last section: 'done' for the final segment, 'next' if more follow."""
+    try:
+        with Path(path).open("rb") as stream:
+            stream.seek(-76, os.SEEK_END)
+            kind = stream.read(16).rstrip(b"\x00")
+    except OSError:
+        return None
+    return kind.decode("ascii", "replace") if kind in (b"done", b"next") else None
+
+
+def image_segments(path):
+    """Return (segments, problem) for a disk image that may be split into several files.
+
+    Recognises EnCase sets (.E01, .E02, ...) and raw splits (.001, .002, ...) starting from the
+    first segment. ``problem`` explains a set that is known to be incomplete, otherwise None.
+    """
+    path = Path(path)
+    suffix = path.suffix
+    if re.fullmatch(r"\.[Ee]01", suffix):
+        upper = suffix[1] == "E"
+        names = (s if upper else s.lower() for s in _ewf_suffixes())
+    elif suffix == ".001":
+        names = (f"{n:03d}" for n in range(1, 1000))
+    elif re.fullmatch(r"\.([Ee]\d\d|[Ee][A-Za-z]{2}|\d{3})", suffix):
+        first = "E01" if suffix[1] in "Ee" else "001"
+        return [path], (f"{path.name} is not the first segment of a split image; choose "
+                        f"{path.with_suffix('.' + (first if suffix[1] != 'e' else first.lower())).name} instead")
+    else:
+        return [path], None
+    segments = []
+    for name in names:
+        candidate = path.with_suffix("." + name)
+        if not candidate.is_file():
+            missing = candidate.name
+            break
+        segments.append(candidate)
+    else:
+        missing = None
+    problem = None
+    if suffix[1] in "Ee" and missing and ewf_end_marker(segments[-1]) == "next":
+        problem = (f"Image segment set is incomplete: {segments[-1].name} says more data follows but {missing} "
+                   f"is missing. Put every segment in the same folder and analyse again.")
+    return segments, problem
 
 
 def archive_target(name, root, seen):
@@ -100,9 +156,13 @@ def stage(evidence, output, manifest, kind, max_bytes):
             destination = target / item["path"]
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(evidence / item["path"], destination)
+        copied = None
     else:
-        shutil.copy2(evidence, target)
-    if [{k: item[k] for k in ("path", "size", "sha256")} for item in inventory(target)] != [
+        # A split image is copied segment by segment, keeping the names tools use to find the rest.
+        copied = [work / item["path"] for item in manifest]
+        for item, destination in zip(manifest, copied):
+            shutil.copy2(evidence.parent / item["path"], destination)
+    if [{k: item[k] for k in ("path", "size", "sha256")} for item in inventory(target, copied)] != [
         {k: item[k] for k in ("path", "size", "sha256")} for item in manifest
     ]:
         raise ValueError("Evidence changed during copy; working copy verification failed")

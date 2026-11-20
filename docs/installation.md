@@ -57,6 +57,35 @@ On the analysis computer, with the project folder copied over:
 
 The offline install never uses the network and applies the same SHA-256 checks.
 
+## 4a. Install, update or repair tools from the app
+
+After the first `setup.ps1` run (which installs Python, YARA and MVT), the portable tools can be managed without the script:
+
+- Desktop: **Tool readiness** shows each pack as *not installed*, *up to date*, *update available* or *damaged*, with an **Install / Update / Repair** button per tool, **Install / update N tool(s)** for all of them, and **Install from offline kit** for a USB kit made with `-SavePacks`.
+- Command line:
+
+```powershell
+.\.venv\Scripts\python.exe -m mobile_df.installer status
+.\.venv\Scripts\python.exe -m mobile_df.installer install all
+.\.venv\Scripts\python.exe -m mobile_df.installer install exiftool --pack-dir E:\mobile-df-packs --offline
+```
+
+Each pack is downloaded over HTTPS only (or copied from the kit) and checked against the SHA-256 in `tool-packs.json` before anything is unpacked. The new copy is unpacked beside the old one and swapped in only when its executable is present, so a failed, cancelled or tampered download leaves the working installation untouched. `tools.local.json` is updated to point at the installed tools; other entries you added are kept. The installed version is recorded in `.tools\installed.json`.
+
+## 4b. Optional: Plaso through Docker
+
+Plaso does not run natively on Windows. With Docker Desktop installed and running, pull the official image once and name it in `tools.local.json`:
+
+```powershell
+docker pull log2timeline/plaso:20240308
+```
+
+```json
+{ "commands": { "...": ["..."] }, "plaso_docker_image": "log2timeline/plaso:20240308" }
+```
+
+Each Plaso run uses `docker run --rm --network none`, mounts the case's working copy **read-only** at `/evidence` and the case's `tools\plaso` folder at `/output`, then exports with `psort` in a second container that never sees the evidence. Paths in Plaso events are mapped back to paths relative to the evidence. The image tag is recorded as the Plaso version in each case.
+
 ## 5. Check the installation
 
 ```powershell
@@ -74,7 +103,7 @@ Expected on a complete install: SQLite, YARA, ExifTool, ALEAPP, MVT and The Sleu
 .\.venv\Scripts\python.exe -m mobile_df.benchmark --output output\bench-first --runs 1
 ```
 
-This builds the synthetic fixtures, analyses the Android-shaped extraction and the FAT12 image, and scores both against the expected findings. Every verdict should be `pass`; checks for tools you have not installed are `skipped`, never counted as passes.
+This builds the synthetic fixtures, analyses the Android-shaped extraction, its ZIP export, an Android `.ab` backup and the FAT12 image, and scores both against the expected findings. Every verdict should be `pass`; checks for tools you have not installed are `skipped`, never counted as passes.
 
 Then start the desktop:
 
@@ -90,7 +119,8 @@ Then start the desktop:
 | A tool shows `MISSING` in Tool readiness | Run setup again, or set its command in `tools.local.json` (see `tools.example.json`), then click **Re-check tools**. |
 | A tool run is `failed` or `partial` in a case | Open the case, go to **TOOL RUNS**, select the tool and click **View logs** to see the command, exit code and the tool's own error output. |
 | `Possible encryption detected` from The Sleuth Kit | The image (or the partition at the given offset) is encrypted or not a supported filesystem. Check the image offset in Settings. |
-| Updating a tool | Change its `version`, `url` and `sha256` together in `tool-packs.json` after testing, delete the old pack from `.tools`, and run setup. |
+| Updating a tool | Change its `version`, `url` and `sha256` together in `tool-packs.json` after testing; Tool readiness then shows **Update** for it. |
+| Plaso shows `MISSING` with Docker configured | Start Docker Desktop, check `docker image ls` lists the image named in `plaso_docker_image`, then click **Re-check tools**. |
 
 ## Licences
 
