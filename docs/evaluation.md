@@ -47,10 +47,28 @@ Added November 2026 (verification and evaluation stream). `mobile_df.evaluation`
 | `media_files` | Files with ExifTool metadata | exiftool |
 | `image_file` | File listed from a filesystem image (image cases only) | sleuthkit |
 | `shared_url` | URL correlated across at least two tools | two of sqlite, aleapp, mvt |
+| `parameters` | Case was analysed with the options the fixture was built for (e.g. `max_rows`) | pipeline |
+| `tool_status` | Each listed tool ended with the expected run status (e.g. `partial`) | pipeline |
+| `sqlite_table_rows` | Exact row count for each `path::table` | sqlite |
+| `sqlite_truncated_tables` | Exactly these `path::table` entries were cut off at the row limit | sqlite |
+| `sqlite_row_values` | Rows with these column values were exported (Unicode, WAL-only rows, odd table names) | sqlite |
 
 A check whose tool was not selected, unavailable or not applicable is `skipped` with the reason rather than counted as a pass or failure. Unknown expectation keys are reported as `unsupported`. The verdict is `fail` if any check fails, `pass` if at least one fixture check passes, and otherwise `inconclusive`. `score` is passes divided by scored checks.
 
 Verified on macOS with Python 3.14 (SQLite and ExifTool only available): the demo scored `pass` with 4 passes and 4 explicit skips. The MVT check relies on MVT naming its SMS output `sms.json`; it is covered by a synthetic unit test and still needs confirmation on the Windows workspace with the real MVT runtime. This is a regression check on controlled fixtures, not an accuracy measure for real evidence.
+
+## Larger SQLite fixture (20 November 2026)
+
+`python -m mobile_df.sqlite_fixture OUTPUT [--max-rows 100]` generates six Android-shaped app databases (WhatsApp-style messages, contacts, call log, Gmail-style mail with BLOBs, Chrome `History` without an extension, Telegram-style cache with rows only in the uncheckpointed `-wal` file), plus a text file and an empty file named `.db`. It then analyses them with SQLite and scores the case against the generated `expected.json`.
+
+Verified on macOS, Python 3.14, at `max_rows` 50, 60 and 100: verdict `pass` with 7/7 checks. All of the following were confirmed:
+- exact row counts for 7 tables, including an empty table and a table named `weird "quoted" table`;
+- the 3 tables larger than the limit are the only ones marked truncated, and the SQLite run is `partial`;
+- the 3 WAL-only rows are exported (the main file alone holds 0 rows);
+- a Unicode caller name survives unchanged;
+- the two non-databases are ignored without an error.
+
+Analysing the same fixture with a different row limit is reported as `fail` on `parameters`, `tool_status` and `sqlite_truncated_tables`, not silently passed. Not yet run on the Windows E1 workspace.
 
 ## Repeated controlled benchmark (18 November 2026)
 

@@ -73,6 +73,18 @@ def _url_sources(result, url):
                    if c.get("type") == "url" and c.get("value") == url for source in c.get("sources", [])})
 
 
+def _sqlite_tables(result):
+    """``path::table`` -> database_table detail for every table the SQLite adapter reported."""
+    return {f"{f['path']}::{f['detail'].get('table')}": f["detail"] for f in _findings(result, "sqlite", "database_table")}
+
+
+def _row_present(result, table, values):
+    path, _, name = table.rpartition("::")
+    return any(f["path"] == path and f["detail"].get("table") == name
+               and all(f["detail"].get("values", {}).get(k) == v for k, v in values.items())
+               for f in _findings(result, "sqlite", "database_row"))
+
+
 def _check(key, expected, result, runs):
     """Return (tools, description, observed, passed) or None for unknown keys."""
     kind = result.get("evidence_kind")
@@ -105,6 +117,24 @@ def _check(key, expected, result, runs):
                            if PurePosixPath(f["path"]).name.lower() == wanted})
         return (["sleuthkit"], "File modification date recovered from the image timeline", observed,
                 any(stamp.startswith(date) for stamp in observed))
+    if key == "parameters":
+        used = result.get("parameters", {})
+        observed = {name: used.get(name) for name in expected}
+        return [], "Case analysed with the parameters the fixture expects", observed, observed == expected
+    if key == "tool_status":
+        observed = {tool: runs.get(tool, {}).get("status", "absent") for tool in expected}
+        return [], "Tool run status", observed, observed == expected
+    if key == "sqlite_table_rows":
+        tables = _sqlite_tables(result)
+        observed = {name: (tables[name].get("rows") if name in tables else "missing") for name in expected}
+        return ["sqlite"], "Exact row count per table", observed, observed == expected
+    if key == "sqlite_truncated_tables":
+        observed = sorted(name for name, detail in _sqlite_tables(result).items() if detail.get("truncated"))
+        return ["sqlite"], "Tables cut off at the row limit", observed, observed == sorted(expected)
+    if key == "sqlite_row_values":
+        missing = [item for item in expected if not _row_present(result, item["table"], item["values"])]
+        observed = {"found": len(expected) - len(missing), "missing": missing}
+        return ["sqlite"], "Specific row values exported", observed, not missing
     if key == "shared_url":
         url_tools = [t for t in ("sqlite", "aleapp", "mvt") if runs.get(t, {}).get("status") in RAN]
         if len(url_tools) < 2:
