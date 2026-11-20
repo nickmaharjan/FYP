@@ -26,7 +26,7 @@ Use `fix/short-description` for a bug fix. Make focused commits with clear messa
 git push -u origin feature/short-description
 ```
 
-Ask another team member to review the pull request before merging. Include the problem, the change, how it was checked, and any limitations. Link related issues when available. Avoid committing generated files or large binaries.
+`master` is protected: direct pushes are rejected, and a pull request needs an approving review from another team member before it can be merged. Ask a teammate to review it. Include the problem, the change, how it was checked, and any limitations. Link related issues when available. Avoid committing generated files or large binaries.
 
 ## Local checks
 
@@ -35,6 +35,14 @@ After setup, run the existing project checks before requesting review:
 ```powershell
 .\scripts\test.ps1
 ```
+
+On macOS or Linux, run the same suite with:
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests
+```
+
+Tests that need an installed forensic tool skip with a reason when it is missing, so a fresh clone should show no failures.
 
 If a check cannot be run, say why in the pull request and describe any manual review performed. Do not put real evidence in test fixtures; create small synthetic fixtures instead.
 
