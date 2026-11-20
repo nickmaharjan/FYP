@@ -17,7 +17,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings,
+from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings, step_logs,
                            filter_timeline, finding_text, list_archived, list_cases, load_case,
                            rerun_options, restore_case)
 from .config import doctor, load_config
@@ -51,7 +51,8 @@ class DesktopApp:
         self.settings = load_settings(self.settings_path)
         self.data_dir_override = data_dir is not None
         self.data_dir = Path(data_dir or self.settings["data_dir"]).resolve()
-        self.config = load_config(config_path)
+        self.config_path = Path(config_path or "tools.local.json").resolve()
+        self.config = load_config(self.config_path)
         self.availability = doctor(self.config)
         self.active_view = "cases"
         self.busy = False
@@ -180,6 +181,7 @@ class DesktopApp:
         side.pack(side="right", fill="y")
         side.pack_propagate(False)
 
+        self._setup_checklist(main)
         command = tk.Frame(main, bg=PALETTE["surface"], padx=20, pady=18)
         command.pack(fill="x", pady=(0, 27))
         tk.Label(command, text="START A CASE", bg=PALETTE["surface"], fg=PALETTE["muted"],
@@ -228,6 +230,31 @@ class DesktopApp:
         tk.Label(side, text=f"{available} OF {len(self.availability)} READY", bg=PALETTE["rail"],
                  fg=PALETTE["muted"], font=(FONT, 8, "bold")).pack(anchor="w")
         self._button(side, "Review tool setup", self.show_tools).pack(anchor="w", pady=(12, 0))
+
+    def _setup_checklist(self, parent):
+        from .readiness import checklist_complete, setup_checklist
+        items = setup_checklist(self.availability, self.settings, self.data_dir)
+        if checklist_complete(items) and all(item["done"] for item in items if item["key"] == "rules"):
+            return
+        band = tk.Frame(parent, bg=PALETTE["surface"], padx=20, pady=14)
+        band.pack(fill="x", pady=(0, 14))
+        done = sum(item["done"] for item in items)
+        tk.Label(band, text=f"SETUP CHECKLIST  /  {done} OF {len(items)} DONE", bg=PALETTE["surface"],
+                 fg=PALETTE["accent"], font=(FONT, 8, "bold")).pack(anchor="w", pady=(0, 6))
+        actions = {"tools": ("Tool readiness", self.show_tools), "settings": ("Settings", self.show_settings)}
+        for item in items:
+            row = tk.Frame(band, bg=PALETTE["surface"])
+            row.pack(fill="x", pady=2)
+            mark, color = ("DONE", PALETTE["success"]) if item["done"] else (
+                ("TO DO", PALETTE["warning"]) if item["required"] else ("OPTIONAL", PALETTE["muted"]))
+            tk.Label(row, text=mark, width=9, anchor="w", bg=PALETTE["surface"], fg=color,
+                     font=(FONT, 8, "bold")).pack(side="left")
+            tk.Label(row, text=f"{item['title']}  -  {item['detail']}", anchor="w", bg=PALETTE["surface"],
+                     fg=PALETTE["ink"] if not item["done"] else PALETTE["muted"], font=(FONT, 9),
+                     wraplength=620, justify="left").pack(side="left")
+            if not item["done"] and item["action"] in actions:
+                label, command = actions[item["action"]]
+                self._button(row, label, command).pack(side="right")
 
     def _refresh_case_table(self):
         table = self.case_table
@@ -529,7 +556,7 @@ class DesktopApp:
         tabs.add(self._findings_tab(tabs, result), text="FINDINGS")
         tabs.add(self._timeline_tab(tabs, result), text="TIMELINE")
         tabs.add(self._correlations_tab(tabs, result), text="CORRELATIONS")
-        tabs.add(self._tool_runs_tab(tabs, result), text="TOOL RUNS")
+        tabs.add(self._tool_runs_tab(tabs, result, folder), text="TOOL RUNS")
 
     def _export_handoff(self, folder, result):
         from .handoff import default_filename, export_case
@@ -681,43 +708,214 @@ class DesktopApp:
                                             len(item.get("finding_ids") or []), item.get("value", "")))
         return tab
 
-    def _tool_runs_tab(self, notebook, result):
+    def _tool_runs_tab(self, notebook, result, folder):
         tab = tk.Frame(notebook, bg=PALETTE["page"])
-        tk.Label(tab, text="Each adapter's outcome for this case. Raw output is kept in the case logs folder.",
-                 bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9)).pack(anchor="w", pady=10)
-        table = self._table(tab, (("tool", "TOOL", 110), ("status", "STATUS", 130), ("count", "FINDINGS", 80),
-                                  ("duration", "SECONDS", 80), ("reason", "REASON", 520)))
+        bar = self._filter_bar(tab)
+        tk.Label(bar, text="Each adapter's outcome for this case. Select a tool and choose View logs to see why it "
+                           "failed or what it printed.", bg=PALETTE["page"], fg=PALETTE["muted"],
+                 font=(FONT, 9)).pack(side="left")
+        table = self._table(tab, (("tool", "TOOL", 100), ("version", "VERSION", 90), ("status", "STATUS", 120),
+                                  ("count", "FINDINGS", 80), ("duration", "SECONDS", 80), ("reason", "REASON", 480)))
+        runs = {}
         for run in result.get("tool_runs") or []:
-            table.insert("", "end", values=(run.get("tool", ""), run.get("status", ""), run.get("findings_count", 0),
-                                            run.get("duration_seconds", ""), run.get("reason", "")))
+            iid = table.insert("", "end", values=(run.get("tool", ""), run.get("tool_version") or "", run.get("status", ""),
+                                                  run.get("findings_count", 0), run.get("duration_seconds", ""),
+                                                  run.get("reason", "")))
+            runs[iid] = run
+
+        def view(_event=None):
+            selection = table.selection()
+            run = runs.get(selection[0]) if selection else None
+            if not run:
+                messagebox.showinfo("View logs", "Select a tool run first.")
+            elif not run.get("steps"):
+                messagebox.showinfo("No logs", f"{run.get('tool')} did not run: {run.get('reason') or run.get('status')}.")
+            else:
+                self._show_logs(folder, run)
+
+        self._button(bar, "Open logs folder", lambda: self._open_folder(Path(folder) / "logs")).pack(side="right")
+        self._button(bar, "View logs", view, primary=True).pack(side="right", padx=(0, 8))
+        table.bind("<Double-1>", view)
         return tab
+
+    def _show_logs(self, folder, run):
+        window = tk.Toplevel(self.root, bg=PALETTE["page"])
+        window.title(f"{run.get('tool')} logs - {run.get('status')}")
+        window.geometry("980x640")
+        tk.Label(window, text=f"{run.get('tool', '').upper()}  /  {run.get('status', '').upper()}",
+                 bg=PALETTE["page"], fg=PALETTE["accent"], font=(FONT, 9, "bold")).pack(anchor="w", padx=16, pady=(14, 0))
+        tk.Label(window, text=run.get("reason") or "Completed without a recorded problem.", bg=PALETTE["page"],
+                 fg=PALETTE["ink"], font=(FONT, 10), wraplength=930, justify="left").pack(anchor="w", padx=16, pady=(4, 10))
+        text = tk.Text(window, bg=PALETTE["surface"], fg=PALETTE["ink"], relief="flat", bd=0, font=("Consolas", 9),
+                       wrap="none", padx=12, pady=10)
+        scroll = ttk.Scrollbar(window, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y", padx=(0, 16), pady=(0, 16))
+        text.pack(fill="both", expand=True, padx=(16, 0), pady=(0, 16))
+        for step in step_logs(folder, run):
+            text.insert("end", f"=== {step['step']}: {step['status']} (exit code {step['exit_code']}, "
+                               f"{step['duration_seconds']} s)\n")
+            if step["reason"]:
+                text.insert("end", f"Reason: {step['reason']}\n")
+            text.insert("end", f"Command: {step['command']}\n\n--- stderr ---\n{step['stderr'].rstrip()}\n\n"
+                               f"--- stdout ---\n{step['stdout'].rstrip()}\n\n")
+        text.configure(state="disabled")
 
     # ----- Tools --------------------------------------------------------------
 
     def show_tools(self):
         if self.busy:
             return
+        from .installer import pack_status
+        from .registry import TOOLS, load_packs
         self.active_view = "tools"
         self._activate_nav("tools")
         self._clear()
         self._heading("ENVIRONMENT  /  LOCAL DEPENDENCIES", "Tool readiness",
-                      "The desktop shell checks the local runtime before analysis. It does not install tools yet.")
+                      "Installed forensic tools, the versions recorded in every case, and their licences.")
+        try:
+            packs = load_packs()
+            states = pack_status(packs)
+        except (OSError, ValueError):
+            packs, states = {}, {}
+        missing = [name for name, state in states.items() if state["action"]]
+        actions = tk.Frame(self.content, bg=PALETTE["page"])
+        actions.pack(fill="x", pady=(0, 14))
+        if missing:
+            self._button(actions, f"Install / update {len(missing)} tool(s)",
+                         lambda: self._install_tools(missing), primary=True).pack(side="left", padx=(0, 8))
+        self._button(actions, "Install from offline kit", lambda: self._install_tools(sorted(packs), offline=True)
+                     ).pack(side="left", padx=(0, 8))
+        self._button(actions, "Verify tool packs", self._verify_packs, primary=not missing).pack(side="left")
+        self._button(actions, "Licence notices", self._show_notices).pack(side="left", padx=(8, 0))
+        self._button(actions, "Re-check tools", self._recheck_tools).pack(side="left", padx=(8, 0))
         columns = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=14)
         columns.pack(fill="x", pady=(0, 3))
-        for label, width in (("TOOL", 26), ("STATUS", 20), ("VERSION / COMMAND", 70)):
+        widths = (("TOOL", 26), ("STATUS", 12), ("VERSION", 12), ("PINNED", 10), ("LICENCE", 44), ("INSTALL", 26))
+        for label, width in widths:
             tk.Label(columns, text=label, bg=PALETTE["surface"], fg=PALETTE["muted"],
                      width=width, anchor="w", font=(FONT, 8, "bold")).pack(side="left")
         for name, info in self.availability.items():
-            row = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=14)
+            meta = TOOLS.get(name, {})
+            row = tk.Frame(self.content, bg=PALETTE["surface"], padx=20, pady=12)
             row.pack(fill="x", pady=1)
             status = "AVAILABLE" if info.get("available") else "MISSING"
             color = PALETTE["success"] if info.get("available") else PALETTE["warning"]
-            detail = info.get("version") or info.get("backend") or " / ".join(info.get("command") or []) or info.get("hint", "")
-            for label, width, foreground in ((name, 26, PALETTE["ink"]), (status, 20, color), (detail, 70, PALETTE["muted"])):
+            pinned = packs.get(name, {}).get("version", "")
+            values = ((meta.get("title", name), PALETTE["ink"]), (status, color), (info.get("version") or "-", PALETTE["ink"]),
+                      (pinned or "-", PALETTE["muted"]), (meta.get("license", ""), PALETTE["muted"]),
+                      (meta.get("install", ""), PALETTE["muted"]))
+            for (label, foreground), (_, width) in zip(values, widths):
                 tk.Label(row, text=label, bg=PALETTE["surface"], fg=foreground,
                          width=width, anchor="w", font=(FONT, 9)).pack(side="left")
-        tk.Label(self.content, text="Tool installation and updates are planned for a later milestone.",
+            state = states.get(name)
+            if state:
+                label = state["action"] or "Reinstall"
+                self._button(row, label, lambda tool=name: self._install_tools([tool]),
+                             primary=bool(state["action"])).pack(side="right")
+        tk.Label(self.content, text="Install, update and repair download the pinned release over HTTPS (or copy it from "
+                                    "an offline kit), check its SHA-256, and only then replace the installed copy. "
+                                    "Python packages (YARA, MVT) are installed by scripts\\setup.ps1. See docs/installation.md.",
+                 wraplength=1000, justify="left",
                  bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 9)).pack(anchor="w", pady=(18, 0))
+
+    def _install_tools(self, names, offline=False):
+        from .installer import InstallCancelled, install_pack
+        if self.busy or not names:
+            return
+        pack_dir = None
+        if offline:
+            pack_dir = filedialog.askdirectory(title="Choose the offline kit folder (made with setup.ps1 -SavePacks)")
+            if not pack_dir:
+                return
+        elif not messagebox.askyesno("Install tools", "Download and install: " + ", ".join(names) + "?\n\n"
+                                     "Each pack is downloaded from its upstream release over HTTPS and checked "
+                                     "against the pinned SHA-256 before anything is replaced."):
+            return
+        self.busy = True
+        cancel = threading.Event()
+        window = tk.Toplevel(self.root, bg=PALETTE["page"])
+        window.title("Installing tools")
+        window.geometry("520x170")
+        window.transient(self.root)
+        text = tk.StringVar(value="Starting…")
+        tk.Label(window, textvariable=text, bg=PALETTE["page"], fg=PALETTE["ink"], font=(FONT, 10),
+                 wraplength=480, justify="left").pack(anchor="w", padx=18, pady=(18, 8))
+        bar = ttk.Progressbar(window, style="DF.Horizontal.TProgressbar", maximum=100)
+        bar.pack(fill="x", padx=18)
+        self._button(window, "Cancel", cancel.set).pack(anchor="e", padx=18, pady=14)
+        window.protocol("WM_DELETE_WINDOW", cancel.set)
+
+        def show(message, percent=None):
+            text.set(message)
+            if percent is None:
+                bar.configure(mode="indeterminate")
+                bar.start(12)
+            else:
+                bar.stop()
+                bar.configure(mode="determinate", value=percent)
+
+        def work():
+            done, errors = [], []
+            for name in names:
+                def progress(stage, current, total, name=name):
+                    if stage == "download":
+                        message = f"{name}: downloading {current // 1048576} MB" + (f" of {total // 1048576} MB" if total else "")
+                        percent = current * 100 / total if total else None
+                    elif stage == "unpack":
+                        message, percent = f"{name}: unpacking", current * 100 / max(total, 1)
+                    else:
+                        message, percent = f"{name}: checking SHA-256", None
+                    self.root.after(0, lambda m=message, p=percent: show(m, p))
+                try:
+                    if cancel.is_set():
+                        raise InstallCancelled("Cancelled")
+                    summary = install_pack(name, config_path=self.config_path, pack_dir=pack_dir,
+                                           offline=offline, progress=progress, cancel=cancel)
+                    done.append(f"{name} {summary['version']}")
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+            self.root.after(0, lambda: finish(done, errors))
+
+        def finish(done, errors):
+            window.destroy()
+            self.busy = False
+            self.config = load_config(self.config_path)
+            self.availability = doctor(self.config)
+            self.show_tools()
+            message = ("Installed: " + ", ".join(done) if done else "Nothing was installed.") + (
+                "\n\nProblems:\n" + "\n".join(errors) if errors else "")
+            (messagebox.showwarning if errors else messagebox.showinfo)("Install tools", message)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _verify_packs(self):
+        from .registry import verify_packs
+        try:
+            report = verify_packs()
+        except (OSError, ValueError) as exc:
+            messagebox.showerror("Verify tool packs", str(exc))
+            return
+        lines = [f"{name}  {item['version']}:  {item['status']}" for name, item in report.items()]
+        bad = any(item["status"] == "MISMATCH" for item in report.values())
+        advice = ("A pack does not match its pinned SHA-256. Delete it from .tools and run setup again." if bad else
+                  "Downloaded packs match the versions this project was tested with.")
+        (messagebox.showerror if bad else messagebox.showinfo)("Verify tool packs", "\n".join(lines) + "\n\n" + advice)
+
+    def _show_notices(self):
+        from .registry import notices
+        window = tk.Toplevel(self.root, bg=PALETTE["page"])
+        window.title("Third-party licence notices")
+        window.geometry("720x520")
+        text = tk.Text(window, bg=PALETTE["surface"], fg=PALETTE["ink"], relief="flat", bd=0, font=("Consolas", 9),
+                       wrap="word", padx=12, pady=10)
+        text.pack(fill="both", expand=True, padx=16, pady=16)
+        text.insert("1.0", notices())
+        text.configure(state="disabled")
+
+    def _recheck_tools(self):
+        self.availability = doctor(self.config)
+        self.show_tools()
 
     # ----- New analysis -------------------------------------------------------
 

@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from mobile_df.case_library import list_cases, rerun_options
+from mobile_df.config import doctor
 from mobile_df.demo import create_demo
 from mobile_df.pipeline import analyze
 
@@ -45,12 +46,16 @@ class ResumeTests(unittest.TestCase):
             self.assertEqual(Path(options["yara_rules"]), fixture["yara_rules"].resolve())
 
             result = analyze(output=root / "cases" / "rerun", config={}, **options)
-            self.assertEqual(result["status"], "completed")
+            # yara-python is optional (installed by scripts/setup.ps1). Without it the re-run is
+            # still valid but YARA is reported unavailable, so the case ends with warnings.
+            yara_ready = doctor({})["yara"]["available"]
+            finished = "completed" if yara_ready else "completed_with_warnings"
+            self.assertEqual(result["status"], finished)
             self.assertEqual(result["parameters"]["timeout"], 77)
             runs = {run["tool"]: run["status"] for run in result["tool_runs"]}
-            self.assertEqual((runs["sqlite"], runs["yara"]), ("success", "success"))
+            self.assertEqual((runs["sqlite"], runs["yara"]), ("success", "success" if yara_ready else "unavailable"))
             statuses = sorted(case["status"] for case in list_cases(root / "cases"))
-            self.assertEqual(statuses, ["completed", "incomplete"], "interrupted folder is kept")
+            self.assertEqual(statuses, sorted([finished, "incomplete"]), "interrupted folder is kept")
             with self.assertRaisesRegex(ValueError, "finished"):
                 rerun_options(root / "cases" / "rerun")
 

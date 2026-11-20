@@ -1,7 +1,10 @@
 """Small, deterministic synthetic fixtures. Contains no personal or malicious data."""
+import io
 import json
 import sqlite3
 import struct
+import tarfile
+import zipfile
 import zlib
 from contextlib import closing
 from pathlib import Path
@@ -54,10 +57,13 @@ def create_demo(root):
          "created": "2026-09-20T00:00:00Z", "modified": "2026-09-20T00:00:00Z", "valid_from": "2026-09-20T00:00:00Z",
          "name": "Synthetic training domain", "pattern_type": "stix", "pattern": "[domain-name:value = 'training-ioc.example']"}]})
     create_fat12(root / "training-fat12.img")
+    create_archive(evidence, root / "training-extraction.zip")
+    create_android_backup(evidence, root / "training-backup.ab")
     write_json(root / "expected.json", {"description": "Synthetic training evidence, never a real compromise",
                "sqlite_sms_rows": 1, "mvt_sms_rows": 1, "yara_rule": "DFIR_Demo_Marker",
                "shared_url": "https://training-ioc.example/check", "media_files": 1,
-               "image_file": "NOTE.TXT", "sqlite_database_files": 2})
+               "image_file": "NOTE.TXT", "image_file_time": {"file": "NOTE.TXT", "date": "2026-09-20"},
+               "sqlite_database_files": 2})
     return {"evidence": evidence, "yara_rules": rules, "iocs": iocs}
 
 
@@ -82,3 +88,24 @@ def create_fat12(path):
     struct.pack_into("<HHHI", data, root + 22, 0, ((2026 - 1980) << 9) | (9 << 5) | 20, 2, len(body))
     data[33 * 512:33 * 512 + len(body)] = body
     path.write_bytes(data)
+
+
+def create_archive(evidence, path):
+    """The extraction folder as a ZIP, as an acquisition tool would export it."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        for item in sorted(Path(evidence).rglob("*")):
+            if item.is_file():
+                archive.write(item, item.relative_to(evidence).as_posix())
+
+
+def create_android_backup(evidence, path):
+    """An unencrypted Android backup (.ab): text header, then a zlib-compressed tar of apps/."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        for item in sorted((Path(evidence) / "apps").rglob("*")):
+            if item.is_file():
+                info = tarfile.TarInfo(item.relative_to(evidence).as_posix())
+                info.size, info.mtime, info.mode = item.stat().st_size, 1789905600, 0o600
+                with item.open("rb") as stream:
+                    archive.addfile(info, stream)
+    Path(path).write_bytes(b"ANDROID BACKUP\n5\n1\nnone\n" + zlib.compress(buffer.getvalue()))

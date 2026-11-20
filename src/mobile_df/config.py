@@ -1,5 +1,4 @@
 import importlib.util
-import importlib.metadata
 import json
 import shutil
 import sys
@@ -10,7 +9,13 @@ from .core import TOOL_NAMES
 DEFAULTS = {"aleapp": ["aleapp", "aleapp.exe"], "mvt": ["mvt-android"],
             "exiftool": ["exiftool"], "sleuthkit": ["fls"],
             "plaso": ["log2timeline.py", "log2timeline"], "psort": ["psort.py", "psort"],
-            "tsk_recover": ["tsk_recover"]}
+            "tsk_recover": ["tsk_recover"], "docker": ["docker"]}
+
+
+def plaso_docker_image(config):
+    """The Plaso container image to run through Docker, when configured and Docker is installed."""
+    image = (config or {}).get("plaso_docker_image")
+    return image if image and command_for("docker", config) else None
 
 
 def load_config(path=None):
@@ -21,6 +26,10 @@ def load_config(path=None):
     for key, command in config.get("commands", {}).items():
         if key not in DEFAULTS or not isinstance(command, list) or not command or not all(isinstance(v, str) and v for v in command):
             raise ValueError(f"Invalid command configuration for {key}")
+    image = config.get("plaso_docker_image")
+    if image is not None and (not isinstance(image, str) or not image.strip() or any(c.isspace() for c in image)
+                              or image.startswith("-")):
+        raise ValueError("plaso_docker_image must be an image name such as log2timeline/plaso:20240308")
     return config
 
 
@@ -51,17 +60,22 @@ def doctor(config=None):
     for name in TOOL_NAMES:
         if name == "sqlite":
             import sqlite3
-            result[name] = {"available": True, "backend": "Python sqlite3", "version": sqlite3.sqlite_version}
+            result[name] = {"available": True, "backend": "Python sqlite3"}
         elif name == "yara":
             ready = importlib.util.find_spec("yara") is not None
             result[name] = {"available": ready, "backend": "yara-python", "hint": "pip install yara-python"}
-            if ready:
-                result[name]["version"] = importlib.metadata.version("yara-python")
         else:
             command = command_for(name, config)
             available = bool(command) and (name != "plaso" or bool(command_for("psort", config)))
             result[name] = {"available": available, "command": command,
                             "hint": "Set commands in tools.local.json or add executables to PATH"}
-            if name == "mvt" and importlib.util.find_spec("mvt"):
-                result[name]["version"] = importlib.metadata.version("mvt")
+            image = plaso_docker_image(config) if name == "plaso" and not available else None
+            if image:
+                tag = image.rsplit(":", 1)[1] if ":" in image.rsplit("/", 1)[-1] else "latest"
+                result[name].update(available=True, command=command_for("docker", config), runtime="docker",
+                                    image=image, version=tag, version_source="Docker image tag")
+    from .registry import detect_version
+    for name, state in result.items():
+        if state["available"] and not state.get("version"):
+            state["version"], state["version_source"] = detect_version(name, state.get("command"))
     return result
