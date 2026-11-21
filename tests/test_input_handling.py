@@ -71,7 +71,7 @@ class InputHandlingTests(unittest.TestCase):
         unnamed.write_bytes(b"\xeb\x3c\x90" + b"\x01" * 1021)   # starts like a boot sector
         self.assertEqual(detect_kind(unnamed), "image")
 
-    def test_corrupt_database_is_a_failed_tool_not_an_empty_success(self):
+    def test_corrupt_database_is_a_partial_tool_not_an_empty_success(self):
         evidence = self.root / "evidence"
         evidence.mkdir()
         (evidence / "broken.db").write_bytes(b"SQLite format 3\x00" + b"\xff" * 2000)
@@ -81,7 +81,9 @@ class InputHandlingTests(unittest.TestCase):
             db.commit()
         result = analyze(evidence, self.root / "case", tools=["sqlite"], config={})
         run = next(r for r in result["tool_runs"] if r["tool"] == "sqlite")
-        self.assertEqual(run["status"], "failed")
+        # One of two databases was read, so the run is partial (not success, not failed) and says which one failed.
+        self.assertEqual(run["status"], "partial")
+        self.assertIn("broken.db", run["reason"])
         self.assertEqual(result["status"], "completed_with_warnings")
         errors = [f for f in result["findings"] if f["kind"] == "analysis_error"]
         self.assertEqual([f["path"] for f in errors], ["broken.db"])

@@ -58,6 +58,12 @@ Gate status: (1) create/resume/review: done. (2) discover and install supported 
 
 - Forensic integrations: split disk images (EnCase `.E01`/`.E02`/... and raw `.001`/`.002`/...) are found from the first segment, hashed, copied and verified as one evidence set, and passed to The Sleuth Kit correctly. An incomplete EnCase set is detected from its final `next`/`done` section and reported by name as a case warning and as the Sleuth Kit failure reason. Found by testing `nps-2008-jean.E01` without its `.E02`. Tests: `tests/test_segments.py`.
 
+## First real Android dataset (21 November 2026)
+
+- Verification and evaluation: the public Android 9 Google Pixel 3 reference image (Digital Corpora, hash-verified) was analysed end to end in under 11 minutes: 101,224 findings, integrity verified, and SMS coverage compared with the author's answer sheet. See [evaluation](evaluation.md#public-android-9-reference-image-google-pixel-3-21-november-2026).
+- Forensic integrations: SQLite now keeps binary data stored in `TEXT` columns (Chrome `History` was being skipped), reads the remaining tables when one fails, and reports `partial` instead of `failed`. Tests: `tests/test_sqlite_robustness.py`.
+- Open: the 50,000-finding cap per tool is too low for a whole phone.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.
