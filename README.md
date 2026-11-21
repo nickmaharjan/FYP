@@ -134,7 +134,7 @@ The ZIP contains the report, results, timeline, evidence hash manifest, audit lo
 
 The suite includes actual installed-tool analysis, SQLite WAL recovery, evidence-change detection, archive traversal/size protection, tool failure isolation, timeout/cancel behavior, report escaping and API access checks. Installed-tool tests skip explicitly if dependencies are absent.
 
-See [architecture and adapter guide](docs/architecture.md), [tool support and upstream references](docs/tool-support.md), and [evaluation results](docs/evaluation.md). The dashboard and reports are implemented with Python's standard library and local HTML/CSS/JavaScript. No hosted services or API keys are required.
+See [architecture and adapter guide](docs/architecture.md), [tool support and upstream references](docs/tool-support.md), [evaluation results](docs/evaluation.md), and the [test plan](docs/test-plan.md). The dashboard and reports are implemented with Python's standard library and local HTML/CSS/JavaScript. No hosted services or API keys are required.
 
 ## Contributing
 
