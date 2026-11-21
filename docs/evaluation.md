@@ -121,6 +121,54 @@ The 4 files in `Encrypted/` are EFS-encrypted; the project does not decrypt them
 
 With both segments present, the pipeline now copies and verifies both; this has been verified with a raw split FAT12 image read by the real Sleuth Kit, but not yet with a real multi-segment E01 set.
 
+## Public Android 9 reference image (Google Pixel 3, 21 November 2026)
+
+First run on a real Android device extraction. The dataset is the public Android 9 reference image created by Joshua Hickman and published on [Digital Corpora](https://digitalcorpora.org/corpora/cell-phones/). It is a test phone filled with app data for research and training; it contains no real person's data. Provenance:
+
+- Downloaded `android_9.tar.gz` (4,479,032,673 bytes). It matched the server's S3 multipart ETag `87c3ce2e43487150502972bf2c3d5a38-534`; SHA-256 `efee950cda419a68cdebfb28a264c85783d1a5e44038334d7773711d97ef464f`.
+- The inner `Google Pixel 3.tar` (the `/data` partition; 28,977 files, 7.4 GB, 375 `.db`/`.sqlite` files, no links) matched the author's published MD5 `c9cb1909efd9a5aca2316103dba08037` and SHA-1 `c19ec5970e200007e4b921dc49d1f70a13ff902c`.
+- The image is not committed to the repository.
+
+`cli analyze "Google Pixel 3.tar" --timeout 1800` on the Windows workspace (same tool versions as the benchmark, Plaso not installed, no YARA rules) took 10 min 42 s:
+
+| Tool | Status | Notes |
+|---|---|---|
+| ALEAPP 2026.4.1 | `partial` | 162 reports, about 65,700 rows, in 171 s. The 50,000-finding cap was reached; the full output stays in `tools/aleapp`. One report (Netstats) alone produced 21,134 rows. |
+| SQLite 3.53.1 | `failed` before the fix below | 346 databases reached the case in 238 s before the 50,000-finding cap |
+| ExifTool 13.59 | `partial` | 1,223 media files; 7 encrypted Silent Phone files unreadable |
+| The Sleuth Kit, MVT | `not_applicable` | A file-system TAR is neither a disk image nor a backup |
+
+The case had 101,224 findings, 11,738 timeline events and 554 correlations, and evidence integrity was verified.
+
+**SMS compared with the author's answer sheet.** The image comes with `SMS Messages.xlsx`, listing 75 SMS messages found by a commercial tool, with the source of each. The project's results compare as follows:
+
+| Source in the answer sheet | Sheet | This project |
+|---|---|---|
+| `com.android.providers.telephony/databases/mmssms.db`, table `sms` | 30 records | 29 rows exported by SQLite. The extra sheet record is probably recovered from deleted space, which these tools do not carve. |
+| `com.google.android.gms/databases/icing_mmssms.db-wal` | 29 records | The `mmssms` table was exported (176 rows, including the WAL) |
+| `com.google.android.apps.messaging/databases/bugle_db` (+`-wal`) | 12 records | `messages` (184 rows) and `parts` (182 rows) were exported |
+| ALEAPP SMS reports | — | `SMS Messages` 49 rows, `SMS and MMS Messages` 202 rows |
+
+This is a coverage check, not an accuracy score: the sheet counts carved and deduplicated records differently from a row export.
+
+**Defect found and fixed.** Chrome's `History`, `Web Data` and `OfflinePages.db` store protobuf bytes in `TEXT` columns. SQLite's text decoding raised an error, the worker abandoned the rest of each database (in `History`, every table after `meta`, including `urls` and `visits`), and the whole SQLite run was marked `failed`. Now:
+- text that is not valid UTF-8 is kept as a blob value;
+- one unreadable table no longer stops the rest of its database;
+- the run is `partial` with a named reason when some databases or tables cannot be read, and `failed` only when none can.
+
+The fixed worker, run on the same extracted copy, gives:
+
+| Measure | Before | After |
+|---|---|---|
+| Databases opened | 576 | 576, none unreadable |
+| Errors | 4 (three Chrome databases and LINE `search.sqlite`) | 1 table (LINE full-text index `idxt`, which needs an SQLite module that is not available) |
+| Tables / rows exported | 3,761 / 79,766 | 3,794 / 79,830 |
+| Chrome `History` | stopped at `meta` | `urls` 14, `visits` 22, `keyword_search_terms` 5 |
+
+Tests: `tests/test_sqlite_robustness.py`.
+
+Still open from this run: the per-tool 50,000-finding cap is too low for a whole phone. ALEAPP lost about 15,500 rows from the case view (they remain in its raw output), and SQLite rows beyond the cap are only in the raw log. A per-report cap or a higher limit is needed.
+
 ## Remaining evaluation
 
-Plaso needs a real compatible runtime and dataset. MVT bugreport/AndroidQF modes need their own fixtures. Real acquired Android images, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.
+Plaso needs a real compatible runtime and dataset. MVT bugreport/AndroidQF modes need their own fixtures. One public Android 9 extraction has now been analysed (above); more Android versions, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.

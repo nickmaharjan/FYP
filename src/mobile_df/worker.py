@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import sqlite3
+import sys
 import time
 from contextlib import closing
 from pathlib import Path
@@ -23,27 +24,48 @@ def json_value(value):
     return value
 
 
+def text_or_bytes(value):
+    """Decode a TEXT value; keep it as bytes when it is not valid UTF-8.
+
+    Apps such as Chrome store protobuf and other binary data in TEXT columns. SQLite's default
+    decoding raises on those, which used to abandon the whole database.
+    """
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return bytes(value)
+
+
 def sqlite_scan(root, max_rows):
-    errors = 0
+    databases, unreadable, table_errors = 0, [], 0
     for path in files_under(root):
         with path.open("rb") as stream:
             if stream.read(16) != b"SQLite format 3\x00":
                 continue
         relative = path.relative_to(root).as_posix()
+        databases += 1
         try:
             # Working copies include -wal and -shm companions. Do not use immutable=1:
             # it can silently ignore uncheckpointed WAL records.
             with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
                 db.execute("PRAGMA query_only=ON")
                 db.execute("PRAGMA trusted_schema=OFF")
+                db.text_factory = text_or_bytes
                 deadline = time.monotonic() + 30
                 db.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
                 tables = db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
                 for (table,) in tables[:200]:
                     quoted = '"' + table.replace('"', '""') + '"'
-                    cursor = db.execute(f"SELECT * FROM {quoted} LIMIT ?", (max_rows + 1,))
-                    columns = [item[0] for item in cursor.description]
-                    rows = cursor.fetchall()
+                    try:
+                        cursor = db.execute(f"SELECT * FROM {quoted} LIMIT ?", (max_rows + 1,))
+                        columns = [item[0] for item in cursor.description]
+                        rows = cursor.fetchall()
+                    except sqlite3.Error as exc:
+                        # One unreadable table (corrupt page, missing module, time limit) must not hide the others.
+                        table_errors += 1
+                        emit(artifact("sqlite", "analysis_error", relative, {"table": table, "error": str(exc)},
+                                      severity="warning", provenance={"table": table}))
+                        continue
                     truncated = len(rows) > max_rows
                     emit(artifact("sqlite", "database_table", relative,
                                   {"table": table, "rows_exported": min(len(rows), max_rows),
@@ -57,9 +79,12 @@ def sqlite_scan(root, max_rows):
                 if len(tables) > 200:
                     emit(artifact("sqlite", "analysis_warning", relative, {"warning": "Only the first 200 tables were analyzed"}))
         except sqlite3.Error as exc:
-            errors += 1
+            unreadable.append(relative)
             emit(artifact("sqlite", "analysis_error", relative, {"error": str(exc)}, severity="warning"))
-    return 1 if errors else 0
+    # A one-line summary on stderr lets the adapter report a partial result instead of a failure.
+    print(json.dumps({"databases": databases, "unreadable_databases": len(unreadable),
+                      "unreadable_tables": table_errors, "examples": unreadable[:3]}), file=sys.stderr)
+    return 1 if unreadable or table_errors else 0
 
 
 def yara_scan(root, rules):

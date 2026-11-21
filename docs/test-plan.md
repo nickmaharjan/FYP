@@ -120,7 +120,8 @@ A milestone is accepted when:
 | ~~MVT `sms` output name assumed by the evaluator~~ | **Closed:** `mvt_sms_rows` passed in all three benchmark runs on E1 with MVT 2026.9.7 ([evaluation.md](evaluation.md#repeated-controlled-benchmark-18-november-2026)) | Re-check whenever the pinned MVT version changes |
 | Plaso not run for real | Real parser output may differ from the contract and simulated-Docker tests | Run on E4 (Docker image); add a fixture with expected events |
 | Image analysis verified on FAT12 and NTFS (E01), not Android filesystems | Android ext4/F2FS behaviour unknown | ext4 fixture (section 5) |
-| No real-device dataset | Accuracy claims cannot be made | Seek an authorised public Android reference dataset; record licence and provenance before use |
+| Only one real-device dataset | Results may not generalise to other Android versions and apps | The public Android 9 Pixel 3 image is analysed, with provenance, in [evaluation.md](evaluation.md#public-android-9-reference-image-google-pixel-3-21-november-2026). Add Android 11-13 images from the same source, and turn the SMS comparison into an `expected.json` |
+| Per-tool finding cap (50,000) | A whole phone exceeds it, so ALEAPP and SQLite records are only in raw output | Per-report cap or a higher limit; measure memory first |
 | Desktop GUI only smoke-tested (render test in `test_integrations.py`) | Regressions in clicks and dialogs found late | Manual checklist each milestone; keep logic in GUI-free modules with tests |
 | Peak memory and disk use not measured | Large evidence may exhaust a workstation | Add to the benchmark in May – Jul (section 9) |
 

@@ -72,7 +72,32 @@ class SQLiteAdapter(Adapter):
 
     def run(self, ctx):
         step = ctx.run(self.name, [sys.executable, "-m", "mobile_df.worker", "sqlite", str(ctx.evidence), "--max-rows", str(ctx.max_rows)])
+        summary = self.summary(ctx.output / step["stderr_log"])
+        if (step["status"] == "failed" and step["exit_code"] == 1 and summary
+                and summary["unreadable_databases"] < summary["databases"]):
+            # The worker exits 1 when some databases or tables could not be read but the rest were
+            # exported; that is a partial result, not a tool failure.
+            parts = []
+            if summary["unreadable_databases"]:
+                parts.append(f"{summary['unreadable_databases']} of {summary['databases']} databases")
+            if summary["unreadable_tables"]:
+                count = summary["unreadable_tables"]
+                parts.append(f"{count} table{'s' if count != 1 else ''}")
+            names = ", ".join(summary.get("examples", []))
+            step["status"] = "partial"
+            step["reason"] = (f"SQLite could not read {' and '.join(parts)} (corrupt, encrypted or unsupported)"
+                              f"{': ' + names if names else ''}; see analysis_error findings")
         return json_lines(ctx.output / step["stdout_log"], ctx.max_findings)
+
+    @staticmethod
+    def summary(path):
+        """The worker's last stderr line: counts of databases and tables it could not read."""
+        try:
+            lines = [line for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+            value = json.loads(lines[-1]) if lines else None
+        except (OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) and "unreadable_databases" in value else None
 
 
 class YaraAdapter(Adapter):
