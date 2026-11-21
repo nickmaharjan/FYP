@@ -4,7 +4,9 @@ Tested on Windows x64 with Python 3.12.14 on 2026-09-20. These results describe 
 
 ## Automated checks
 
-`python -m unittest discover -s tests -v`: **15 tests passed**, including the installed-tool integration test. The suite completed in approximately 12 seconds on this machine.
+`python -m unittest discover -s tests -v`: **15 tests passed** at that date, including the installed-tool integration test. The suite completed in approximately 12 seconds on this machine.
+
+On 2026-11-20 the suite on `master` has **67 tests**: all pass on macOS with Python 3.14, with the 2 installed-tool tests skipped because the full tool set is not installed there.
 
 Coverage includes SQLite tables and row content, databases without file extensions, uncheckpointed WAL data, SHA-256 evidence preservation, deliberate source modification detection, ZIP extraction, path traversal and case-insensitive duplicate rejection, archive size limits, protection of existing cases, subprocess failure isolation, timeouts, cancellation, bounded row export, UTC conversion, exact-value correlations, report script escaping, API token requirements and Origin checks.
 
