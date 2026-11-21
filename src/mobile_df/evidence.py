@@ -6,6 +6,7 @@ import shutil
 import stat
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path, PurePosixPath
 
 from .core import sha256
@@ -171,6 +172,18 @@ def stage(evidence, output, manifest, kind, max_bytes):
     return target
 
 
+ARCHIVE_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".tbz2", ".tar.bz2", ".txz", ".tar.xz")
+
+
+def _probe(check, path):
+    """Run an archive check; a crash while probing means "not a readable archive"."""
+    try:
+        return check(path)
+    except (EOFError, OSError, zlib.error, tarfile.TarError):
+        # e.g. a .tar.gz cut off early raises EOFError inside tarfile.is_tarfile
+        return False
+
+
 def detect_kind(path, requested="auto"):
     if requested != "auto":
         return requested
@@ -178,6 +191,13 @@ def detect_kind(path, requested="auto"):
         return "directory"
     if path.suffix.lower() == ".ab":
         return "backup"
-    if zipfile.is_zipfile(path) or tarfile.is_tarfile(path):
+    if _probe(zipfile.is_zipfile, path) or _probe(tarfile.is_tarfile, path):
         return "archive"
+    name = path.name.lower()
+    if name.endswith(ARCHIVE_SUFFIXES):
+        # Without this, a damaged or partly copied archive is treated as a disk image,
+        # no extraction tool applies, and the case reports "completed" with nothing analysed.
+        raise ValueError(f"{path.name} is named like an archive but is not a readable ZIP or TAR file; "
+                         "it may be damaged, incomplete or in an unsupported format. "
+                         "If it is really a disk image, analyse it from the command line with --kind image.")
     return "image"
