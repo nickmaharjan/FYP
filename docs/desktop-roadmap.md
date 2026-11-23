@@ -64,6 +64,13 @@ Gate status: (1) create/resume/review: done. (2) discover and install supported 
 - Forensic integrations: SQLite now keeps binary data stored in `TEXT` columns (Chrome `History` was being skipped), reads the remaining tables when one fails, and reports `partial` instead of `failed`. Tests: `tests/test_sqlite_robustness.py`.
 - Open: the 50,000-finding cap per tool is too low for a whole phone.
 
+## Case summary and grouped findings (23 November 2026)
+
+- Desktop: case review now opens on a **Summary** tab written in plain language: a one-sentence headline (evidence type, run time, how many tools worked or were not used, whether the evidence changed), what was found by category with counts, *Needs your attention* (failed or partial tools with their reasons, leads, warnings, integrity), when the activity happened (date range and busiest days, ignoring times created by the analysis itself), each tool's outcome in plain words, and the evidence integrity.
+- Desktop: findings are grouped into **Messages, Calls, Contacts, Web & searches, Locations, Photos & media, Accounts, Apps & usage, Device & settings, Files & system, Leads to check, Tool problems** and **Evidence files**. A category filter and column were added to FINDINGS; clicking a box on the summary opens those findings. Categories come from what each finding already records (ALEAPP report name, SQLite database and table, ExifTool file type, Plaso data type), so nothing in `results.json` changes. Logic: `src/mobile_df/summary.py`; tests: `tests/test_summary.py`.
+- Evaluation: the complete two-segment jean image and the first real Plaso run (Docker) are recorded in [evaluation](evaluation.md#nps-2008-jean-disk-image-complete-set-22-november-2026).
+- Still open: readable rows instead of raw values, merging duplicates found by two tools, a per-category finding cap with date filtering for Plaso, and a printable report.
+
 ## Proposed work split to reach 50% by September 20, 2027
 
 Current planning date: November 11, 2026. The earlier September 20, 2026 date has passed; this plan assumes the next September 20 checkpoint. By that checkpoint, finish desktop case management, tool setup and compatibility, integrated analysis/report review, and the first evaluation/release candidate. Treat each stream as roughly 10% of the total product, for a combined 40% after the current 10% shell.

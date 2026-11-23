@@ -119,7 +119,39 @@ The 4 files in `Encrypted/` are EFS-encrypted; the project does not decrypt them
 | Case warning | none | the same message |
 | Evidence integrity | verified | verified |
 
-With both segments present, the pipeline now copies and verifies both; this has been verified with a raw split FAT12 image read by the real Sleuth Kit, but not yet with a real multi-segment E01 set.
+With both segments present, the pipeline now copies and verifies both; this has been verified with a raw split FAT12 image read by the real Sleuth Kit and with the complete `nps-2008-jean` set (next section).
+
+## NPS 2008 "Jean" disk image, complete set (22 November 2026)
+
+Both segments, from [Digital Corpora](https://digitalcorpora.org/corpora/disk-images/) (`corpora/drives/nps-2008-m57-jean/`): `nps-2008-jean.E01` (1,572,860,321 bytes, ends with a `next` section) and `nps-2008-jean.E02` (1,466,890,611 bytes, ends with `done`). The Sleuth Kit opens them as one 10 GiB disk (EWF image, stored MD5 `78a52b5bac78f4e711607707ac0e3f93`). `cli analyze nps-2008-jean.E01 --image-offset 63 --timeout 1800`, same tools as the benchmark (Plaso and YARA rules not used), took 8 min 9 s:
+
+| Measure | `.E01` only (19 Nov) | `.E01` + `.E02` |
+|---|---|---|
+| Segments found, hashed, copied and re-verified | 1 | 2 (`parameters.image_segments`) |
+| Sleuth Kit | `failed`: `.E02` is missing | `partial`: 50,000-finding cap reached |
+| Files recovered by `tsk_recover` | 0 | 30,722 |
+| Timeline events | 0 | 29,513 (1996 to 21 July 2008) |
+| Findings | 2 | 56,463 (also SQLite 3,788, ExifTool 2,657) |
+| Evidence integrity | verified | verified |
+
+The scenario's key file is found and recovered: `Documents and Settings/Jean/Desktop/m57biz.xls` (291,840 bytes, modified 2008-07-20 01:28:03 UTC), with Windows and Office *Recent* shortcuts (`m57biz.lnk`, `m57biz.LNK`) created or modified at 01:27:42 to 01:28:04 UTC, showing the file was opened at that time. The 4,756 `timestamp_anomaly` leads (standard-information creation earlier than file-name creation) are review leads only: on Windows XP many come from software installation and file copies.
+
+## First real Plaso run (22 November 2026)
+
+Plaso 20240308 through Docker (`plaso_docker_image: log2timeline/plaso:20240308`, 598 MB image) on the complete jean set, `--tools plaso --image-offset 63 --timeout 7200`. Both segments were visible in the container because the working folder is mounted read-only; the container had no network.
+
+| Measure | Result |
+|---|---|
+| `log2timeline` (extraction) | `success` in 2,487 s; storage file 996 MB |
+| `psort` (export to JSON lines) | `success` in 466 s; 1,773,196 events (3.0 GB) |
+| Run status | `partial`: only the first 50,000 events reached the case |
+| Evidence integrity | verified |
+
+Most frequent event types among the 50,000 loaded: `fs:stat` 27,385, `pe_coff:file` 15,156, `windows:registry:appcompatcache` 3,491, `msiecf:url` 1,439, `windows:registry:userassist` 474, `windows:lnk:link` 315.
+
+Two findings for the design:
+- `psort` output is not in time order, so the 50,000 loaded events stop in April 2008 and miss the July 2008 activity of the scenario. A per-tool cap is unsuitable for Plaso: whole-disk timelines need date and event-type filtering instead.
+- Many early timestamps (1993-1994) are dates written into files by their makers (Office templates, program compile times), not user activity. The new case summary keeps these under *Files & system* and only counts records such as shortcuts, *UserAssist* and browser history as user activity.
 
 ## Public Android 9 reference image (Google Pixel 3, 21 November 2026)
 
@@ -171,4 +203,4 @@ Still open from this run: the per-tool 50,000-finding cap is too low for a whole
 
 ## Remaining evaluation
 
-Plaso needs a real compatible runtime and dataset. MVT bugreport/AndroidQF modes need their own fixtures. One public Android 9 extraction has now been analysed (above); more Android versions, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.
+Plaso has now run for real through Docker (above), but its whole-disk timeline exceeds the finding cap. MVT bugreport/AndroidQF modes need their own fixtures. One public Android 9 extraction has now been analysed (above); more Android versions, additional application schemas, larger datasets, encrypted inputs and manual-versus-automated coverage comparisons remain necessary for the proposal's final academic evaluation. Raw image recovery was verified using FAT12, not Android ext4/F2FS. No forensic accuracy or speedup claim is made beyond these tests.

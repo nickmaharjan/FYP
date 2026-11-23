@@ -24,6 +24,7 @@ from .config import doctor, load_config
 from .pipeline import analyze
 from .progress import ProgressModel
 from .settings import DEFAULTS, load_settings, save_settings, selected_tools
+from .summary import CATEGORIES, LABELS, case_overview, categorize
 
 
 PALETTE = {
@@ -547,13 +548,17 @@ class DesktopApp:
             cell.pack(side="left", padx=(0, 34))
             tk.Label(cell, text=label, bg=PALETTE["surface"], fg=PALETTE["muted"], font=(FONT, 8, "bold")).pack(anchor="w")
             tk.Label(cell, text=str(value), bg=PALETTE["surface"], fg=color, font=(FONT, 15, "bold")).pack(anchor="w")
-        for warning in result.get("warnings") or []:
-            tk.Label(self.content, text="WARNING  " + warning, bg=PALETTE["page"], fg=PALETTE["warning"],
-                     font=(FONT, 9), wraplength=900, justify="left").pack(anchor="w", pady=(0, 6))
-
         tabs = ttk.Notebook(self.content, style="DF.TNotebook")
         tabs.pack(fill="both", expand=True)
-        tabs.add(self._findings_tab(tabs, result), text="FINDINGS")
+        findings_tab, show_category = self._findings_tab(tabs, result)
+
+        def open_category(key):
+            show_category(key)
+            tabs.select(findings_tab)
+
+        # The summary comes first: warnings, problems and what was found, in plain words.
+        tabs.add(self._summary_tab(tabs, result, open_category), text="SUMMARY")
+        tabs.add(findings_tab, text="FINDINGS")
         tabs.add(self._timeline_tab(tabs, result), text="TIMELINE")
         tabs.add(self._correlations_tab(tabs, result), text="CORRELATIONS")
         tabs.add(self._tool_runs_tab(tabs, result, folder), text="TOOL RUNS")
@@ -611,12 +616,96 @@ class DesktopApp:
         return ttk.Combobox(bar, textvariable=variable, values=[""] + list(values),
                             state="readonly", width=width, style="DF.TCombobox")
 
+    def _summary_tab(self, notebook, result, open_category):
+        """Plain-language overview: headline, what was found by category, what needs attention, tools."""
+        overview = case_overview(result)
+        outer = tk.Frame(notebook, bg=PALETTE["page"])
+        canvas = tk.Canvas(outer, bg=PALETTE["page"], highlightthickness=0, bd=0)
+        scroll = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        tab = tk.Frame(canvas, bg=PALETTE["page"], padx=4, pady=12)
+        tab.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        window = canvas.create_window((0, 0), window=tab, anchor="nw")
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        def section(title):
+            tk.Label(tab, text=title, bg=PALETTE["page"], fg=PALETTE["muted"],
+                     font=(FONT, 8, "bold")).pack(anchor="w", pady=(16, 6))
+
+        tk.Label(tab, text=overview["headline"], bg=PALETTE["page"], fg=PALETTE["ink"], font=(FONT, 11),
+                 wraplength=1000, justify="left").pack(anchor="w")
+
+        section("WHAT WAS FOUND  (click a box to see those findings)")
+        grid = tk.Frame(tab, bg=PALETTE["page"])
+        grid.pack(anchor="w", fill="x")
+        for index, category in enumerate(overview["categories"]):
+            cell = tk.Frame(grid, bg=PALETTE["surface"], padx=14, pady=10, cursor="hand2", width=235, height=84)
+            cell.grid(row=index // 4, column=index % 4, padx=(0, 10), pady=(0, 10), sticky="nsew")
+            cell.grid_propagate(False)
+            color = PALETTE["warning"] if category["key"] in ("leads", "problems") else PALETTE["ink"]
+            labels = (tk.Label(cell, text=f"{category['count']:,}", bg=PALETTE["surface"], fg=color,
+                               font=(FONT, 15, "bold")),
+                      tk.Label(cell, text=category["label"], bg=PALETTE["surface"], fg=PALETTE["ink"],
+                               font=(FONT, 9, "bold")),
+                      tk.Label(cell, text=category["explanation"], bg=PALETTE["surface"], fg=PALETTE["muted"],
+                               font=(FONT, 8), wraplength=205, justify="left"))
+            for widget in (cell,) + labels:
+                widget.bind("<Button-1>", lambda _e, key=category["key"]: open_category(key))
+            for label in labels:
+                label.pack(anchor="w")
+        if not overview["categories"]:
+            tk.Label(tab, text="No findings were produced.", bg=PALETTE["page"], fg=PALETTE["muted"],
+                     font=(FONT, 9)).pack(anchor="w")
+
+        section("NEEDS YOUR ATTENTION")
+        for item in overview["attention"] or ["Nothing: every selected tool worked and the evidence is unchanged."]:
+            tk.Label(tab, text="\u2022  " + item, bg=PALETTE["page"],
+                     fg=PALETTE["warning"] if overview["attention"] else PALETTE["success"],
+                     font=(FONT, 9), wraplength=1000, justify="left").pack(anchor="w", pady=(0, 4))
+
+        section("WHEN THE ACTIVITY HAPPENED")
+        if overview["activity_range"]:
+            first, last = overview["activity_range"]
+            busiest = ", ".join(f"{day} ({count:,} records)" for day, count in overview["busiest_days"])
+            text = f"User activity records run from {first} to {last} (UTC).\nBusiest days: {busiest}."
+        else:
+            text = "No dated user activity (messages, calls, web history, apps) was found."
+        tk.Label(tab, text=text, bg=PALETTE["page"], fg=PALETTE["ink"], font=(FONT, 9),
+                 justify="left").pack(anchor="w")
+
+        section("TOOLS")
+        for tool in overview["tools"]:
+            row = tk.Frame(tab, bg=PALETTE["page"])
+            row.pack(anchor="w", fill="x", pady=(0, 3))
+            color = {"success": PALETTE["success"], "partial": PALETTE["warning"], "failed": PALETTE["danger"],
+                     "timeout": PALETTE["danger"]}.get(tool["status"], PALETTE["muted"])
+            tk.Label(row, text=str(tool["tool"]), bg=PALETTE["page"], fg=PALETTE["ink"], width=12, anchor="w",
+                     font=(FONT, 9, "bold")).pack(side="left")
+            tk.Label(row, text=tool["plain"], bg=PALETTE["page"], fg=color, font=(FONT, 9), wraplength=880,
+                     justify="left", anchor="w").pack(side="left", fill="x")
+
+        section("EVIDENCE")
+        integrity = overview["integrity"]
+        tk.Label(tab, text=("Verified: the evidence was fingerprinted (SHA-256) before and after the analysis and did "
+                            "not change." if integrity == "verified" else
+                            f"Integrity is {integrity}: compare the evidence fingerprints in the full report."),
+                 bg=PALETTE["page"], fg=PALETTE["success"] if integrity == "verified" else PALETTE["danger"],
+                 font=(FONT, 9), wraplength=1000, justify="left").pack(anchor="w")
+        return outer
+
     def _findings_tab(self, notebook, result):
+        """Returns (tab, show_category) so the summary can open a category directly."""
         tab = tk.Frame(notebook, bg=PALETTE["page"])
         findings = result.get("findings") or []
         sources, severities = facets(findings)
-        source, severity, query = tk.StringVar(), tk.StringVar(), tk.StringVar()
+        categories = {id(item): categorize(item) for item in findings}
+        present = set(categories.values())
+        by_label = {label: key for key, label, _ in CATEGORIES if key in present}
+        category, source, severity, query = tk.StringVar(), tk.StringVar(), tk.StringVar(), tk.StringVar()
         bar = self._filter_bar(tab)
+        self._labelled(bar, "CATEGORY", self._combo(bar, category, list(by_label), 16))
         self._labelled(bar, "SOURCE", self._combo(bar, source, sources, 12))
         self._labelled(bar, "SEVERITY", self._combo(bar, severity, severities, 10))
         self._labelled(bar, "SEARCH", self._entry(bar, query, width=26))
@@ -625,16 +714,21 @@ class DesktopApp:
         detail = tk.Text(tab, height=7, bg=PALETTE["surface"], fg=PALETTE["ink"], relief="flat", bd=0,
                          font=("Consolas", 9), wrap="word", padx=12, pady=10, state="disabled")
         detail.pack(side="bottom", fill="x", pady=(8, 0))
-        table = self._table(tab, (("severity", "SEVERITY", 90), ("source", "SOURCE", 90), ("kind", "KIND", 130),
-                                  ("time", "TIME (UTC)", 150), ("path", "PATH", 260), ("summary", "SUMMARY", 320)))
+        table = self._table(tab, (("category", "CATEGORY", 120), ("severity", "SEVERITY", 80),
+                                  ("source", "SOURCE", 80), ("kind", "KIND", 120), ("time", "TIME (UTC)", 150),
+                                  ("path", "PATH", 240), ("summary", "SUMMARY", 300)))
         shown, current = {}, []
 
         def refresh(*_):
             table.delete(*table.get_children())
             shown.clear()
-            current[:] = filter_findings(findings, source.get(), severity.get(), query.get())
+            wanted = by_label.get(category.get())
+            rows = filter_findings(findings, source.get(), severity.get(), query.get(),
+                                   include_inventory=wanted == "evidence")
+            current[:] = [item for item in rows if not wanted or categories.get(id(item)) == wanted]
             for item in current[:MAX_TABLE_ROWS]:
-                iid = table.insert("", "end", values=(item.get("severity", ""), item.get("source", ""),
+                iid = table.insert("", "end", values=(LABELS.get(categories.get(id(item)), ""),
+                                                      item.get("severity", ""), item.get("source", ""),
                                                       item.get("kind", ""), _short_time(item.get("timestamp")),
                                                       item.get("path", ""), finding_text(item)))
                 shown[iid] = item
@@ -662,11 +756,15 @@ class DesktopApp:
                 messagebox.showinfo("Export complete", f"{len(current)} finding(s) written to\n{path}")
 
         self._button(bar, "Export CSV", export).pack(side="right")
-        for variable in (source, severity, query):
+        for variable in (category, source, severity, query):
             variable.trace_add("write", refresh)
         table.bind("<<TreeviewSelect>>", select)
         refresh()
-        return tab
+
+        def show_category(key):
+            category.set(LABELS.get(key, "") if key in present else "")
+
+        return tab, show_category
 
     def _timeline_tab(self, notebook, result):
         tab = tk.Frame(notebook, bg=PALETTE["page"])
