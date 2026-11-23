@@ -118,7 +118,7 @@ A milestone is accepted when:
 |---|---|---|
 | No continuous integration | A test that only passes on one machine can be merged | Add a GitHub Actions workflow running the suite on Windows and Ubuntu (needs a maintainer or a token with `workflow` scope) |
 | ~~MVT `sms` output name assumed by the evaluator~~ | **Closed:** `mvt_sms_rows` passed in all three benchmark runs on E1 with MVT 2026.9.7 ([evaluation.md](evaluation.md#repeated-controlled-benchmark-18-november-2026)) | Re-check whenever the pinned MVT version changes |
-| Plaso not run for real | Real parser output may differ from the contract and simulated-Docker tests | Run on E4 (Docker image); add a fixture with expected events |
+| Plaso timeline larger than the finding cap | A whole disk gives about 1.8 million events, but only the first 50,000 reach the case, and not in time order | Real run on E4 recorded in [evaluation.md](evaluation.md#first-real-plaso-run-22-november-2026); add date and event-type filtering, then a fixture with expected events |
 | Image analysis verified on FAT12 and NTFS (E01), not Android filesystems | Android ext4/F2FS behaviour unknown | ext4 fixture (section 5) |
 | Only one real-device dataset | Results may not generalise to other Android versions and apps | The public Android 9 Pixel 3 image is analysed, with provenance, in [evaluation.md](evaluation.md#public-android-9-reference-image-google-pixel-3-21-november-2026). Add Android 11-13 images from the same source, and turn the SMS comparison into an `expected.json` |
 | Per-tool finding cap (50,000) | A whole phone exceeds it, so ALEAPP and SQLite records are only in raw output | Per-report cap or a higher limit; measure memory first |
