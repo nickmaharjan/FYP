@@ -18,13 +18,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .case_library import (archive_case, delete_case, export_findings_csv, facets, filter_findings, step_logs,
-                           filter_timeline, finding_text, list_archived, list_cases, load_case,
+                           filter_timeline, list_archived, list_cases, load_case,
                            rerun_options, restore_case)
 from .config import doctor, load_config
 from .pipeline import analyze
 from .progress import ProgressModel
 from .settings import DEFAULTS, load_settings, save_settings, selected_tools
-from .summary import CATEGORIES, LABELS, case_overview, categorize
+from .summary import CATEGORIES, LABELS, case_overview, categorize, describe
 
 
 PALETTE = {
@@ -714,9 +714,9 @@ class DesktopApp:
         detail = tk.Text(tab, height=7, bg=PALETTE["surface"], fg=PALETTE["ink"], relief="flat", bd=0,
                          font=("Consolas", 9), wrap="word", padx=12, pady=10, state="disabled")
         detail.pack(side="bottom", fill="x", pady=(8, 0))
-        table = self._table(tab, (("category", "CATEGORY", 120), ("severity", "SEVERITY", 80),
-                                  ("source", "SOURCE", 80), ("kind", "KIND", 120), ("time", "TIME (UTC)", 150),
-                                  ("path", "PATH", 240), ("summary", "SUMMARY", 300)))
+        # Readable "what" first; tool, kind and raw values stay in the details panel below.
+        table = self._table(tab, (("category", "CATEGORY", 120), ("time", "TIME (UTC)", 140),
+                                  ("source", "TOOL", 75), ("what", "WHAT", 760)))
         shown, current = {}, []
 
         def refresh(*_):
@@ -728,9 +728,8 @@ class DesktopApp:
             current[:] = [item for item in rows if not wanted or categories.get(id(item)) == wanted]
             for item in current[:MAX_TABLE_ROWS]:
                 iid = table.insert("", "end", values=(LABELS.get(categories.get(id(item)), ""),
-                                                      item.get("severity", ""), item.get("source", ""),
-                                                      item.get("kind", ""), _short_time(item.get("timestamp")),
-                                                      item.get("path", ""), finding_text(item)))
+                                                      _short_time(item.get("timestamp")), item.get("source", ""),
+                                                      describe(item)))
                 shown[iid] = item
             suffix = f" (first {MAX_TABLE_ROWS} shown)" if len(current) > MAX_TABLE_ROWS else ""
             count.configure(text=f"{len(current)} finding(s){suffix}")
@@ -741,7 +740,8 @@ class DesktopApp:
             detail.configure(state="normal")
             detail.delete("1.0", "end")
             if item:
-                detail.insert("1.0", json.dumps(item, ensure_ascii=False, indent=2))
+                detail.insert("1.0", describe(item) + "\n\nTechnical details (as recorded by the tool):\n"
+                              + json.dumps(item, ensure_ascii=False, indent=2))
             detail.configure(state="disabled")
 
         def export():
@@ -778,15 +778,15 @@ class DesktopApp:
         count.pack(side="left")
         tk.Label(tab, text="Dates are ISO prefixes such as 2026-07 or 2026-07-15. All times are UTC.",
                  bg=PALETTE["page"], fg=PALETTE["muted"], font=(FONT, 8)).pack(anchor="w", pady=(0, 6))
-        table = self._table(tab, (("time", "TIME (UTC)", 170), ("source", "SOURCE", 90), ("kind", "KIND", 130),
-                                  ("path", "PATH", 260), ("summary", "SUMMARY", 320)))
+        table = self._table(tab, (("time", "TIME (UTC)", 150), ("category", "CATEGORY", 120),
+                                  ("source", "TOOL", 75), ("what", "WHAT", 740)))
 
         def refresh(*_):
             table.delete(*table.get_children())
             rows = filter_timeline(timeline, start.get().strip(), end.get().strip(), query.get())
             for item in rows[:MAX_TABLE_ROWS]:
-                table.insert("", "end", values=(_short_time(item.get("timestamp")), item.get("source", ""),
-                                                item.get("kind", ""), item.get("path", ""), finding_text(item)))
+                table.insert("", "end", values=(_short_time(item.get("timestamp")), LABELS[categorize(item)],
+                                                item.get("source", ""), describe(item)))
             suffix = f" (first {MAX_TABLE_ROWS} shown)" if len(rows) > MAX_TABLE_ROWS else ""
             count.configure(text=f"{len(rows)} event(s){suffix}")
 
