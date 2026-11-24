@@ -7,6 +7,8 @@ builds the summary shown before any table. It is GUI-free so the desktop app, th
 tests can share it.
 """
 import collections
+import json
+import re
 from datetime import datetime
 from pathlib import PurePosixPath
 
@@ -222,3 +224,162 @@ def case_overview(result):
         "tools": [{"tool": r.get("tool"), "status": r.get("status"), "plain": plain_status(r),
                    "findings": r.get("findings_count", 0)} for r in runs],
     }
+
+
+# ----- Readable one-line descriptions ------------------------------------------------------------
+
+_TAG = re.compile(r"<[^>]+>")
+_SPACE = re.compile(r"\s+")
+# Column names worth showing first, in order; anything that looks like a time is left out because
+# the finding's own timestamp column already shows it.
+_PREFERRED = ("display name", "name", "partner", "contact", "address", "phone number", "number", "from", "to",
+              "sender", "recipient", "body", "message", "text", "title", "url", "query", "search", "subject",
+              "account name", "account", "app", "package", "doc id", "location", "latitude", "longitude",
+              "type", "direction", "duration", "filename", "source url")
+_SKIP = ("time", "date", "timestamp", "source file", "source", "profile path", "record location", "row id",
+         "msg id", "thread id", "contact id", "_id", "id", "password", "token", "mime type", "mimetype", "data")
+_MACB = {"m": "modified", "a": "accessed", "c": "metadata changed", "b": "created"}
+_SMS_TYPE = {1: "Received", 2: "Sent", 3: "Draft", 4: "Outbox", 5: "Failed", 6: "Queued"}
+_CALL_TYPE = {1: "Incoming call", 2: "Outgoing call", 3: "Missed call", 4: "Voicemail", 5: "Rejected call",
+              6: "Blocked call"}
+MAX_TEXT = 220
+
+
+def _clean(value, limit=90):
+    """Display text for one value: no markup, single spaces, shortened."""
+    if value is None:
+        return ""
+    if isinstance(value, dict):
+        return f"<{value.get('bytes', '?')} bytes of binary data>" if value.get("type") == "blob" else ""
+    text = _SPACE.sub(" ", _TAG.sub("", str(value))).strip()
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _pick(values, count=3):
+    """The most informative 'Key: value' pairs from a row of named values."""
+    chosen, used = [], set()
+    lowered = {key: str(key).lower().strip() for key in values}
+    ranked = [k for want in _PREFERRED for k in values if lowered[k] == want]
+    ranked += [k for k in values if k not in ranked]
+    for key in ranked:
+        name = lowered[key]
+        value = values[key]
+        if key in used or value in (None, "", " ") or any(name == s or name.endswith(" " + s) for s in _SKIP):
+            continue
+        if any(word in name for word in ("time", "date")):
+            continue
+        text = _clean(value)
+        if not text or text in ("0", "-1", "None", "null"):
+            continue
+        chosen.append(f"{key}: {text}")
+        used.add(key)
+        if len(chosen) == count:
+            break
+    return chosen
+
+
+def _int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _sqlite_row(finding, detail):
+    values = detail.get("values") or {}
+    table = str(detail.get("table", ""))
+    if table == "sms" and "body" in values:
+        kind = _SMS_TYPE.get(_int(values.get("type")), "SMS")
+        direction = "to" if kind in ("Sent", "Outbox", "Draft", "Failed", "Queued") else "from"
+        return f"{kind} SMS {direction} {_clean(values.get('address'), 40) or 'unknown'}: “{_clean(values.get('body'), 140)}”"
+    if table == "calls" and "number" in values:
+        name = _clean(values.get("name"), 40)
+        seconds = _int(values.get("duration"))
+        return (f"{_CALL_TYPE.get(_int(values.get('type')), 'Call')} {'with' if _int(values.get('type')) != 2 else 'to'} "
+                f"{_clean(values.get('number'), 30)}{' (' + name + ')' if name else ''}"
+                f"{f', {seconds} s' if seconds else ''}")
+    if table == "urls" and "url" in values:
+        title = _clean(values.get("title"), 80)
+        return f"Visited {title + ' — ' if title else ''}{_clean(values.get('url'), 120)}"
+    database = PurePosixPath(finding.get("path", "")).name
+    pairs = _pick(values)
+    return f"{database} › {table}: " + (" · ".join(pairs) if pairs else "row")
+
+
+def describe(finding):
+    """One readable sentence for a finding, so investigators do not have to read raw JSON."""
+    source, kind = finding.get("source", ""), finding.get("kind", "")
+    detail = finding.get("detail") if isinstance(finding.get("detail"), dict) else {}
+    path = finding.get("path", "")
+    name = PurePosixPath(str(path).replace("\\", "/")).name or path
+    text = None
+    if source == "inventory":
+        text = (f"Evidence file {path}, {detail.get('size', 0):,} bytes, "
+                f"SHA-256 {str(detail.get('sha256', ''))[:16]}…")
+    elif kind == "analysis_error":
+        text = f"Could not read {name}{' table ' + str(detail['table']) if detail.get('table') else ''}: {_clean(detail.get('error'), 120)}"
+    elif kind == "analysis_warning":
+        text = f"{name}: {_clean(detail.get('warning'), 140)}"
+    elif source == "aleapp":
+        pairs = _pick(detail)
+        text = f"{_report_name(finding).strip()}: " + (" · ".join(pairs) if pairs else "record")
+    elif source == "sqlite" and kind == "database_row":
+        text = _sqlite_row(finding, detail)
+    elif source == "sqlite" and kind == "database_table":
+        rows = detail.get("rows")
+        size = f"{rows:,} rows" if isinstance(rows, int) else f"more than {detail.get('rows_exported', 0):,} rows (cut at the row limit)"
+        text = f"Database table {detail.get('table')} in {name}: {size}"
+    elif source == "exiftool":
+        parts = [f"{detail.get('File:FileType') or 'File'} {name}"]
+        taken = detail.get("EXIF:DateTimeOriginal") or detail.get("QuickTime:CreateDate")
+        camera = " ".join(str(detail[k]) for k in ("EXIF:Make", "EXIF:Model") if detail.get(k))
+        if taken:
+            parts.append(f"taken {taken}")
+        if camera:
+            parts.append(f"camera {camera}")
+        if detail.get("Composite:GPSPosition"):
+            parts.append(f"GPS {detail['Composite:GPSPosition']}")
+        if detail.get("Composite:ImageSize"):
+            parts.append(f"{str(detail['Composite:ImageSize']).replace(' ', '×')} px")
+        if "ExifTool:Error" in detail or "Error" in detail:
+            parts.append("could not be read: " + _clean(detail.get("ExifTool:Error") or detail.get("Error"), 80))
+        text = ", ".join(parts)
+    elif source == "sleuthkit" and kind == "filesystem_entry":
+        directory = str(detail.get("mode", "")).startswith("d")
+        size = "" if directory else ", {:,} bytes".format(detail.get("size") or 0)
+        text = f"{'Deleted ' if detail.get('deleted') else ''}{'folder' if directory else 'file'} {path}{size}"
+        text = text[:1].upper() + text[1:]
+    elif source == "sleuthkit" and kind == "file_time":
+        flags = [word for flag, word in _MACB.items() if flag in str(detail.get("macb", ""))]
+        text = f"{'Deleted file' if detail.get('deleted') else 'File'} {', '.join(flags) or 'time'}: {path}"
+    elif kind == "timestamp_anomaly":
+        text = (f"Created time looks earlier than expected (possible timestamp change, check it): {path}")
+    elif source == "plaso":
+        label = detail.get("timestamp_desc")
+        message = _clean(detail.get("message"), 170)
+        text = f"{label + ': ' if label and label != 'Not a time' else ''}{message or detail.get('data_type', '')}"
+    elif kind == "rule_match":
+        description = (detail.get("metadata") or {}).get("description")
+        text = f"YARA rule {detail.get('rule')} matched {name}{' (' + _clean(description, 80) + ')' if description else ''}"
+    elif source == "mvt" and kind == "indicator":
+        text = f"MVT {str(detail.get('level', 'alert')).lower()}: {_clean(detail.get('message'), 170)}"
+    elif source == "mvt" and "body" in detail:
+        text = f"SMS {_clean(detail.get('address'), 40)}: “{_clean(detail.get('body'), 140)}”"
+    if not text:
+        pairs = _pick(detail.get("values") if isinstance(detail.get("values"), dict) else detail)
+        text = f"{name}: " + (" · ".join(pairs) if pairs else _clean(json.dumps(detail, ensure_ascii=False), 120))
+    return text if len(text) <= MAX_TEXT else text[:MAX_TEXT - 1] + "…"
+
+
+def enrich(result):
+    """A copy of a case result with the overview and, on every finding, its category, label and text.
+
+    Used for display only (HTML report and dashboard); results.json on disk is never changed.
+    """
+    def decorate(item):
+        key = categorize(item)
+        return {**item, "category": key, "category_label": LABELS[key], "text": describe(item)}
+
+    return {**result, "overview": case_overview(result), "categories": [list(c) for c in CATEGORIES],
+            "findings": [decorate(f) for f in result.get("findings") or []],
+            "timeline": [decorate(f) for f in result.get("timeline") or []]}

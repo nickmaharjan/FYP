@@ -14,6 +14,7 @@ from .config import doctor, load_config
 from .core import utc_now
 from .demo import create_demo
 from .pipeline import analyze
+from .summary import enrich
 
 
 class CaseManager:
@@ -125,7 +126,11 @@ def make_server(root, config=None, port=8765):
                 elif path == "/api/cases":
                     self.send(200, manager.list())
                 elif path.startswith("/api/cases/"):
-                    self.send(200, manager.get(path.rsplit("/", 1)[1]))
+                    case = manager.get(path.rsplit("/", 1)[1])
+                    if "result" in case:
+                        # Display copy with the plain-language summary, categories and readable text.
+                        case = {**case, "result": enrich(case["result"])}
+                    self.send(200, case)
                 elif path.startswith("/api/download/"):
                     parts = path.split("/")
                     if len(parts) != 5 or parts[4] not in {"report.html", "results.json", "timeline.csv", "manifest.json", "audit.jsonl"}:
