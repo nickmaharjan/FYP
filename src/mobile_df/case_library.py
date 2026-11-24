@@ -235,11 +235,14 @@ def export_findings_csv(findings, destination):
     destination = Path(destination)
     with destination.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.writer(stream)
-        writer.writerow(["finding_id", "source", "kind", "severity", "timestamp_utc", "path", "summary"])
+        from .summary import LABELS, categorize, describe
+        writer.writerow(["finding_id", "source", "kind", "severity", "timestamp_utc", "path", "summary",
+                         "category", "what"])
         for item in findings:
             writer.writerow([_csv_safe(v) for v in (item.get("id"), item.get("source"), item.get("kind"),
                                                     item.get("severity"), item.get("timestamp"),
-                                                    item.get("path"), finding_text(item))])
+                                                    item.get("path"), finding_text(item),
+                                                    LABELS[categorize(item)], describe(item))])
     return destination
 
 
