@@ -427,7 +427,8 @@ class DesktopApp:
                       f"Applied to every new analysis. Saved locally in {self.settings_path}.")
         form = tk.Frame(self.content, bg=PALETTE["surface"], padx=22, pady=18)
         form.pack(fill="x", anchor="n")
-        values = {key: tk.StringVar(value=str(self.settings.get(key) or ""))
+        # Show 0 as "0": `value or ""` would blank it, and saving would then fail on the empty number.
+        values = {key: tk.StringVar(value="" if self.settings.get(key) is None else str(self.settings.get(key)))
                   for key in ("data_dir", "timeout", "max_rows", "image_offset", "yara_rules", "iocs")}
 
         def row(label, key, hint, browse=None):

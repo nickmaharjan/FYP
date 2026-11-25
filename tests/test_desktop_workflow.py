@@ -138,5 +138,45 @@ class ArchiveTests(unittest.TestCase):
             self.assertTrue(case.is_dir())
 
 
+class SettingsScreenTests(unittest.TestCase):
+    def test_changing_the_case_folder_saves_with_the_default_zero_offset(self):
+        """A saved image offset of 0 used to show as an empty box, so every Save failed."""
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+        except Exception as exc:  # no display available
+            self.skipTest(f"Tk unavailable: {exc}")
+        root.withdraw()
+        try:
+            from tkinter import messagebox
+            from unittest import mock
+            from mobile_df.desktop import DesktopApp
+            with tempfile.TemporaryDirectory() as folder:
+                settings = Path(folder) / "settings.json"
+                app = DesktopApp(root, settings_path=settings)
+                app.show_settings()
+                root.update_idletasks()
+
+                def walk(widget):
+                    for child in widget.winfo_children():
+                        yield child
+                        yield from walk(child)
+
+                entries = [w for w in walk(app.content) if isinstance(w, tk.Entry)]
+                self.assertIn("0", [e.get() for e in entries], "the zero offset is shown, not blanked")
+                cases = Path(folder) / "My Results"
+                entries[0].delete(0, "end")
+                entries[0].insert(0, str(cases))
+                save = next(w for w in walk(app.content) if isinstance(w, tk.Button) and w.cget("text") == "Save settings")
+                with mock.patch.object(messagebox, "showerror") as error:
+                    save.invoke()
+                error.assert_not_called()
+                saved = json.loads(settings.read_text(encoding="utf-8"))
+                self.assertEqual((saved["data_dir"], saved["image_offset"]), (str(cases), 0))
+                self.assertEqual(app.data_dir, cases.resolve())
+        finally:
+            root.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()
