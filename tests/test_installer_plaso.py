@@ -134,7 +134,47 @@ else:
 '''
 
 
+# A container that outlives the `docker run` client: a marker file stands for the running container,
+# which only `docker rm --force <name>` removes, as with real Docker when the client process is killed.
+HANGING_DOCKER = r'''
+import sys, time
+from pathlib import Path
+args = sys.argv[1:]
+containers = Path(__file__).parent / "containers"
+containers.mkdir(exist_ok=True)
+if args[:2] == ["rm", "--force"]:
+    marker = containers / args[2]
+    if not marker.exists():
+        print("Error: No such container: " + args[2], file=sys.stderr)
+        sys.exit(1)
+    marker.unlink()
+    print(args[2])
+elif args[0] == "run":
+    (containers / args[args.index("--name") + 1]).write_text("running")
+    time.sleep(120)
+'''
+
+
 class PlasoDockerTests(unittest.TestCase):
+    def test_timeout_removes_the_container_it_started(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            evidence = root / "extraction"
+            evidence.mkdir()
+            (evidence / "note.txt").write_text("hello")
+            fake = root / "fake_docker.py"
+            fake.write_text(HANGING_DOCKER)
+            config = {"commands": {"docker": [sys.executable, str(fake)]}, "plaso_docker_image": "log2timeline/plaso:20240308"}
+            result = analyze(evidence, root / "case", tools=["plaso"], config=config, timeout=3)
+            run = next(r for r in result["tool_runs"] if r["tool"] == "plaso")
+            self.assertEqual(run["status"], "timeout")
+            [step] = run["steps"]
+            name = step["command"][step["command"].index("--name") + 1]
+            self.assertTrue(name.startswith("mobile-df-plaso-") and name.endswith("-extract"))
+            self.assertEqual(step["container_cleanup"], {"container": name, "removed": True, "output": name})
+            self.assertEqual(list((root / "containers").iterdir()), [], "no container is left running")
+
+
     def test_docker_runtime_mounts_read_only_without_network_and_maps_paths(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -2,7 +2,9 @@
 import csv
 import json
 import os
+import subprocess
 import sys
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -373,36 +375,59 @@ def container_relative(value, evidence_name):
 class PlasoAdapter(Adapter):
     name = "plaso"
 
-    def _docker(self, ctx, image, mounts, arguments):
-        command = command_for("docker", ctx.config) + ["run", "--rm", "--network", "none"]
+    def _docker(self, ctx, image, mounts, arguments, name):
+        command = command_for("docker", ctx.config) + ["run", "--rm", "--network", "none", "--name", name]
         for host, container, mode in mounts:
             command += ["-v", f"{host}:{container}:{mode}"]
         return command + [image] + arguments
+
+    @staticmethod
+    def _remove_container(ctx, step, name):
+        """Stopping `docker run` on a timeout or cancel does not stop its container, which kept using CPU and
+        writing into the finished case; remove the container by name and record the outcome in the step."""
+        if step["status"] not in ("timeout", "cancelled"):
+            return
+        try:
+            done = subprocess.run(command_for("docker", ctx.config) + ["rm", "--force", name],
+                                  capture_output=True, text=True, timeout=60,
+                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            step["container_cleanup"] = {"container": name, "removed": done.returncode == 0,
+                                         "output": (done.stdout + done.stderr).strip()[:300]}
+        except (OSError, subprocess.SubprocessError) as exc:
+            step["container_cleanup"] = {"container": name, "removed": False, "output": str(exc)}
 
     def run(self, ctx):
         directory = ctx.directory(self.name)
         storage, events = directory / "timeline.plaso", directory / "events.jsonl"
         image = None if command_for(self.name, ctx.config) and command_for("psort", ctx.config) else plaso_docker_image(ctx.config)
+        names = {}
         if image:
             # Evidence is mounted read-only and the container has no network access.
+            prefix = f"mobile-df-plaso-{uuid.uuid4().hex[:12]}"
+            names = {"extract": prefix + "-extract", "export": prefix + "-export"}
             evidence_mount = (str(ctx.evidence.parent), CONTAINER_EVIDENCE, "ro")
             output_mount = (str(directory), CONTAINER_OUTPUT, "rw")
             source = f"{CONTAINER_EVIDENCE}/{ctx.evidence.name}"
             extract = self._docker(ctx, image, [evidence_mount, output_mount],
                                    ["log2timeline.py", "--status_view", "none", "--unattended",
-                                    "--storage-file", f"{CONTAINER_OUTPUT}/{storage.name}", source])
+                                    "--storage-file", f"{CONTAINER_OUTPUT}/{storage.name}", source], names["extract"])
             export_command = self._docker(ctx, image, [output_mount],
                                           ["psort.py", "--status_view", "none", "-o", "json_line", "-w",
-                                           f"{CONTAINER_OUTPUT}/{events.name}", f"{CONTAINER_OUTPUT}/{storage.name}"])
+                                           f"{CONTAINER_OUTPUT}/{events.name}", f"{CONTAINER_OUTPUT}/{storage.name}"],
+                                          names["export"])
             to_path = lambda value: container_relative(value, ctx.evidence.name)
         else:
             extract = command_for(self.name, ctx.config) + ["--storage-file", str(storage), str(ctx.evidence)]
             export_command = command_for("psort", ctx.config) + ["-o", "json_line", "-w", str(events), str(storage)]
             to_path = lambda value: relative_source(value, ctx.evidence)
         step = ctx.run(self.name, extract)
+        if names:
+            self._remove_container(ctx, step, names["extract"])
         if step["status"] != "success":
             return []
         export = ctx.run("plaso-export", export_command)
+        if names:
+            self._remove_container(ctx, export, names["export"])
         if export["status"] != "success" or not events.is_file():
             return []
         results = []
