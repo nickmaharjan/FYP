@@ -151,20 +151,36 @@ class AleappAdapter(Adapter):
     def run(self, ctx):
         directory = ctx.directory(self.name)
         command = command_for(self.name, ctx.config) + ["-t", "fs", "-i", str(ctx.evidence), "-o", str(directory)]
-        ctx.run(self.name, command)
-        results = []
-        for path in sorted(directory.rglob("*.tsv")):
-            with path.open(encoding="utf-8-sig", errors="replace", newline="") as stream:
-                reader = csv.DictReader(stream, delimiter="\t")
-                for index, row in enumerate(reader):
-                    stamp, basis = timestamp_from(row)
-                    source = next((v for k, v in row.items() if k and k.lower() in ("source", "source file", "source_file", "source path")), "")
-                    results.append(artifact(self.name, "android_artifact",
-                                           relative_source(source, ctx.evidence) if source else f"tool-output:{path.relative_to(ctx.output).as_posix()}",
-                                           dict(row), stamp, basis,
-                                           provenance={"output": path.relative_to(ctx.output).as_posix(), "row": index + 2}))
-                    if len(results) >= ctx.max_findings:
-                        return results
+        step = ctx.run(self.name, command)
+        # ALEAPP puts whole JSON documents and web-storage values into single cells; csv's default
+        # 128 KB cell limit made one such report abort the parse and lose every other report.
+        csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
+        results, unreadable = [], []
+        reports = sorted(directory.rglob("*.tsv"))
+        for path in reports:
+            report = path.relative_to(ctx.output).as_posix()
+            try:
+                with path.open(encoding="utf-8-sig", errors="replace", newline="") as stream:
+                    reader = csv.DictReader(stream, delimiter="\t")
+                    for index, row in enumerate(reader):
+                        stamp, basis = timestamp_from(row)
+                        source = next((v for k, v in row.items() if k and k.lower() in ("source", "source file", "source_file", "source path")), "")
+                        results.append(artifact(self.name, "android_artifact",
+                                               relative_source(source, ctx.evidence) if source else f"tool-output:{report}",
+                                               dict(row), stamp, basis,
+                                               provenance={"output": report, "row": index + 2}))
+                        if len(results) >= ctx.max_findings:
+                            return results
+            except (csv.Error, OSError) as exc:
+                # Keep the rows already read and every other report; record what could not be read.
+                unreadable.append(path.stem)
+                results.append(artifact(self.name, "analysis_error", f"tool-output:{report}",
+                                        {"error": f"{type(exc).__name__}: {exc}"}, severity="warning",
+                                        provenance={"output": report}))
+        if unreadable and step["status"] == "success":
+            step["status"] = "partial"
+            step["reason"] = (f"Could not read {len(unreadable)} of {len(reports)} ALEAPP reports: "
+                              f"{', '.join(unreadable[:3])}; see analysis_error findings")
         return results
 
 
