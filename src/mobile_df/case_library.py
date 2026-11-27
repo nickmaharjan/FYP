@@ -24,10 +24,60 @@ def _load(path):
     return value if isinstance(value, dict) else None
 
 
+HEADER_KEYS = ("case_id", "status", "evidence", "started_utc", "completed_utc")
+_SUMMARY_CACHE = {}
+
+
+def _summary_fields(path, head_bytes=65536, tail_bytes=262144):
+    """Read only the fields the case list needs from a results.json written by write_json (indent=2).
+
+    The header keys sit at the top of the file and integrity/metrics at the end; reading just those
+    avoids parsing the inventory, findings and timeline arrays, which reach hundreds of MB on a phone.
+    Returns None when the layout is not recognised, so the caller falls back to a full load.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            head = stream.read(head_bytes).decode("utf-8", errors="ignore")
+            stream.seek(max(0, size - tail_bytes))
+            tail = stream.read().decode("utf-8", errors="ignore")
+    except OSError:
+        return None
+    decoder, fields = json.JSONDecoder(), {}
+    for key in HEADER_KEYS:
+        marker = f'\n  "{key}": '
+        at = head.find(marker)
+        if at < 0:
+            return None
+        try:
+            fields[key], _ = decoder.raw_decode(head, at + len(marker))
+        except ValueError:
+            return None
+    at = tail.rfind('\n  "integrity": ')
+    if at < 0:
+        return None
+    try:
+        closing = json.loads("{" + tail[at:])
+    except ValueError:
+        return None
+    if not isinstance(closing, dict) or not isinstance(closing.get("metrics"), dict):
+        return None
+    return {**fields, **closing}
+
+
 def case_summary(folder):
     """Return a list-row summary for a case folder, or None if it is not a case."""
     folder = Path(folder)
-    result = _load(folder / "results.json")
+    results = folder / "results.json"
+    try:
+        stamp = results.stat()
+        key = (str(results.resolve()), stamp.st_mtime_ns, stamp.st_size)
+    except OSError:
+        key = None
+    report = folder / "report.html"
+    if key in _SUMMARY_CACHE:
+        return {**_SUMMARY_CACHE[key], "report": str(report) if report.is_file() else None}
+    result = (_summary_fields(results) or _load(results)) if key else None
     if result is None:
         status = _load(folder / "status.json")
         if status is None:
@@ -39,17 +89,19 @@ def case_summary(folder):
                 "findings": 0, "timeline_events": 0, "correlations": 0,
                 "integrity": "unknown", "evidence": rerun.get("evidence", ""), "report": None}
     metrics = result.get("metrics") or {}
-    report = folder / "report.html"
-    return {"folder": str(folder), "case_id": result.get("case_id", folder.name),
-            "status": result.get("status", "unknown"),
-            "started_utc": result.get("started_utc") or "",
-            "completed_utc": result.get("completed_utc") or "",
-            "findings": metrics.get("findings", len(result.get("findings") or [])),
-            "timeline_events": metrics.get("timeline_events", len(result.get("timeline") or [])),
-            "correlations": metrics.get("correlations", len(result.get("correlations") or [])),
-            "integrity": (result.get("integrity") or {}).get("status", "unknown"),
-            "evidence": result.get("evidence", ""),
-            "report": str(report) if report.is_file() else None}
+    summary = {"folder": str(folder), "case_id": result.get("case_id", folder.name),
+               "status": result.get("status", "unknown"),
+               "started_utc": result.get("started_utc") or "",
+               "completed_utc": result.get("completed_utc") or "",
+               "findings": metrics.get("findings", len(result.get("findings") or [])),
+               "timeline_events": metrics.get("timeline_events", len(result.get("timeline") or [])),
+               "correlations": metrics.get("correlations", len(result.get("correlations") or [])),
+               "integrity": (result.get("integrity") or {}).get("status", "unknown"),
+               "evidence": result.get("evidence", ""),
+               "report": str(report) if report.is_file() else None}
+    # Finished cases do not change; remember the row until results.json itself changes.
+    _SUMMARY_CACHE[key] = summary
+    return dict(summary)
 
 
 RERUN_KEYS = ("evidence", "case_id", "kind", "mvt_mode", "tools", "timeout", "max_rows", "max_findings",
